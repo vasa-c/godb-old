@@ -3,7 +3,7 @@
  * Библиотека для работы с базой данных MySQL
  * 
  * @package   goDB
- * @version   1.2.2 (28 сентября 2010)
+ * @version   1.3.0 (11 октября 2010)
  * @link      http://pyha.ru/go/godb/
  * @author    Григорьев Олег aka vasa_c (http://blgo.ru/blog/)
  * @copyright &copy; Григорьев Олег & PyhaTeam, 2007-2010
@@ -11,7 +11,7 @@
  * @uses      php_mysqli (http://php.net/mysqli)
  */
 
-class goDB extends mysqli 
+class goDB extends mysqli implements goDBI
 {
 
   /*** PUBLIC: ***/
@@ -69,8 +69,8 @@ class goDB extends mysqli
         if (!empty($charset)) {
             $this->set_charset($charset);
         }
-    }  
-    
+    }
+
     /**
      * Выполнение запроса к базе
      *
@@ -103,23 +103,439 @@ class goDB extends mysqli
                 return false;
             }
         }
-        if ($this->queryDebug) {
-        	if ($this->queryDebug === true) {
-            	echo '<pre>'.htmlSpecialChars($query).'</pre>';
-        	} else {
-        		call_user_func($this->queryDebug, $query);
-        	}
-        }        
+        $this->toDebug($query);
+        if ($this->transactionFailed) {
+            return false;
+        }
         $result = parent::query($query, MYSQLI_STORE_RESULT);
         if ($this->errno) {
+            if (is_object($result)) {
+                $result->free();
+            }
             throw new goDBExceptionQuery($query, $this->errno, $this->error);
         }
         $return = $this->fetch($result, $fetch);
-        if ((!is_object($return)) && (is_object($result))) {
+        if ((is_object($result)) and ($result !== $return)) {
             $result->free();
         }
         return $return;
-    }    
+    }
+
+    /**
+     * Выполнение запроса, путём вызова объекта, как метода
+     *
+     * @example $result = $db($pattern, $data, $fetch);
+     * PHP >5.3
+     */
+    public function __invoke($pattern, $data = null, $fetch = null, $prefix = null) {
+        return $this->query($pattern, $data, $fetch, $prefix);
+    }
+
+    /**
+     * Старт транзакции
+     *
+     * @link http://pyha.ru/go/godb/transaction/
+     *
+     * @param bool $saveAC [optional]
+     *        сохранять ли значение autocommit
+     * @return int
+     *         новый уровень вложенности
+     */
+    public function transactionBegin($saveAC = false) {
+        $this->transactionLevel++;
+        if ($this->transactionLevel > 1) {
+            return $this->transactionLevel;
+        }
+        if ($saveAC) {
+            $this->transactionACStored = $this->getAutocommit();
+        } else {
+            $this->transactionACStored = true;
+        }
+        parent::autocommit(false);
+        $this->transactionFailed = false;
+        return $this->transactionLevel;
+    }
+
+    /**
+     * Подтверждение правильности данной транзакции
+     *
+     * @link http://pyha.ru/go/godb/transaction/
+     *
+     * @return bool
+     *         произошло ли сохранение или это вложенная транзакция
+     */
+    public function transactionCommit() {
+        if (!$this->inTransaction()) {
+            return false;
+        }
+        $this->transactionLevel--;
+        if ($this->transactionLevel > 0) {
+            return false;
+        }
+        if (!$this->transactionFailed) {
+            parent::commit();
+        } else {
+            parent::rollback();
+            $this->transactionFailed = false;
+        }
+        parent::autocommit($this->transactionACStored);
+        return true;
+    }
+
+    /**
+     * Откат транзакции
+     *
+     * @link http://pyha.ru/go/godb/transaction/
+     *
+     * @throws goDBExceptionTransactionRollback
+     *
+     * @param bool $throw [optional]
+     *        false - тихий откат
+     *        true  - с выбросом исключения
+     */
+    public function transactionRollback($throw = false) {
+        if (!$this->inTransaction()) {
+            return false;
+        }
+        if ($throw) {
+            $this->transactionLevel = 0;
+            parent::rollback();
+            parent::autocommit($this->transactionACStored);
+            $this->transactionFailed = false;
+            throw new goDBExceptionTransactionRollback();
+        } else {
+            $this->transactionLevel--;
+            if ($this->transactionLevel == 0) {
+                parent::rollback();
+                parent::autocommit($this->transactionACStored);
+                $this->transactionFailed = false;
+                return true;
+            }
+            $this->transactionFailed = true;
+        }
+        return true;
+    }
+
+    /**
+     * Выполнение функции внутри транзакции
+
+     *
+     * @link http://pyha.ru/go/godb/transaction/
+     *
+     * @throws любые исключения из функции,
+     *         кроме goDBExceptionTransactionRollback на верхнем уровне
+     *
+     * @param callback $callback
+     *        функция, вызываемая внутри транзакции
+     * @param bool $saveAC [optional]
+     *        сохранять ли значение автокоммита
+     */
+    public function transactionRun($callback, $saveAC = false) {
+        $level = $this->transactionBegin($saveAC);
+        try {
+            $result = call_user_func($callback);
+            if ($result) {
+                $this->transactionCommit();
+            } else {
+                $this->transactionRollback();
+            }
+            return $result;
+        } catch (goDBExceptionTransactionRollback $e) {
+            return false;
+        } catch (goDBExceptionQuery $e) {
+            $this->transactionRollback();
+            throw $e;
+        }
+    }
+
+    /**
+     * Узнать уровень вложенности транзакции
+     *
+     * @link http://pyha.ru/go/godb/transaction/
+     *
+     * @return int
+     *         уровень вложенности (1 - верхний, 0 - вне транзакции)
+     */
+    public function transactionLevel() {
+        return $this->transactionLevel;
+    }
+
+    /**
+     * Узнать, не отмечена ли траназкция уже, как провалившаяся
+     *
+     * @link http://pyha.ru/go/godb/transaction/
+     *
+     * @return bool
+     */
+    public function transactionFailed() {
+        return $this->transactionFailed;
+    }
+
+    /**
+     * Узнать, находимся ли мы внутри транзакции
+     *
+     * @link http://pyha.ru/go/godb/transaction/
+     *
+     * @return bool
+     */
+    public function inTransaction() {
+        return ($this->transactionLevel > 0);
+    }
+
+    /**
+     * Закрыть транзакцию, вне зависимости от уровня
+     *
+     * @link http://pyha.ru/go/godb/transaction/
+     *
+     * @param bool $commit [optional]
+     *        коммитить или откатывать
+     */
+    public function transactionClose($commit = false) {
+        if (!$this->inTransaction()) {
+            return false;
+        }
+        $this->transactionLevel = 1;
+        if ($commit) {
+            return $this->transactionCommit();
+        } else {
+            return $this->transactionRollback();
+        }
+    }
+
+    /**
+     * Переопределение mysqli::autocommit()
+     *
+     * @link http://ru.php.net/manual/en/mysqli.autocommit.php
+     * @link http://pyha.ru/go/godb/transaction/
+     *
+     * @param bool $mode
+     *
+     * @return bool
+     */
+    public function autocommit($mode) {
+        if (!$this->inTransaction()) {
+            return parent::autocommit($mode);
+        }
+        return true;
+    }
+
+    /**
+     * Переопределение mysqli::commit()
+     *
+     * @link http://ru.php.net/manual/en/mysqli.commit.php
+     * @link http://pyha.ru/go/godb/transaction/
+     *
+     * @return bool
+     */
+    public function commit() {
+        if (!$this->inTransaction()) {
+            return parent::commit();
+        }
+        return true;
+    }
+
+    /**
+     * Переопределение mysqli::commit()
+     *
+     * @link http://ru.php.net/manual/en/mysqli.rollback.php
+     * @link http://pyha.ru/go/godb/transaction/
+     *
+     * @return bool
+     */
+    public function rollback() {
+        if (!$this->inTransaction()) {
+            return parent::rollback();
+        }
+        $this->transactionLevel++;
+        return $this->transactionRollback();
+    }
+
+    /**
+     * Получить значение автокоммита
+     *
+     * @return bool
+     */
+    public function getAutocommit() {
+        return $this->query('SELECT @@autocommit', null, 'bool');
+    }
+
+
+    /**
+     * Мультизапрос
+     *
+     * @link http://pyha.ru/go/godb/multi/
+     *
+     * @param mixed $patterns
+     * @param array $datas [optional]
+     * @param mixed $fetches [optional]
+     * @param bool $transaction [optional]
+     * @return array
+     */
+    public function multiQuery($patterns, $datas = null, $fetches = null, $transaction = true) {
+        if ($this->transactionFailed) {
+            return false;
+        }
+        $args = $this->argsMultiQuery($patterns, $datas, $fetches);
+        if (!$args) {
+            return array();
+        }
+        $queries = $args['queries'];
+        $last    = $args['last'];
+        $multi   = array();
+        foreach ($queries as $q) {
+            $multi[] = $this->makeQuery($q[0], $q[1]).';';
+        }
+        $multi = implode("\n", $multi);
+        $this->toDebug("\n".$multi."\n");
+        if ($transaction) {
+            $this->transactionBegin();
+        }
+        $this->multi_query($multi);
+        try {
+            $results = $this->multiFetch($queries, $fetches, $last, $transaction);
+        } catch (goDBExceptionFetch $e) {
+            /* Ошибка разбора - требуется вытащить все оставшиеся результаты и закомитить */
+            while ($this->more_results()) {
+                $this->next_result();
+            }
+            if ($transaction) {
+                $this->transactionCommit();
+            }
+            throw $e;
+        }
+        if ($transaction) {
+            $this->transactionCommit();
+        }
+        return $results;
+    }
+
+    /**
+     * Создание подготовленного выражения
+     *
+     * @override mysqli::prepare()
+     *
+     * @link http://pyha.ru/go/godb/prepare/
+     * @link http://ru.php.net/manual/en/mysqli.prepare.php
+     *
+     * @param string $query
+     *        шаблон подготовленного запроса
+     * @param bool $godb
+     *        использовать godb-стиль (иначе - mysqli)
+     * @return goDBPrepare
+     *         или mysqli_stmt
+     */
+    public function prepare($query, $godb = false) {
+        if (!$godb) {
+            return parent::prepare($query);
+        }
+        return (new goDBPrepare($this, $query));
+    }
+
+    /**
+     * Создание и выполнение подготовленного выражения
+     *
+     * @link http://pyha.ru/go/godb/prepare/
+     *
+     * @param string $query
+     *        шаблон запроса или имя именованного выражения
+     * @param array $data
+     *        входные данные
+     * @param string $fetch
+     *        формат разбора
+     */
+    public function prepareExecute($query, $data, $fetch, $cache = true) {
+        if (!$cache) {
+            if (empty($query)) {
+                return false;
+            }
+            if ($query[0] == '#') {
+                throw new goDBExceptionPrepareNamed('Cannot create prepare by one name');
+            }
+            $prepare = new goDBPrepare($this, $query);
+            $result  = $prepare->execute($data, $fetch);
+            $prepare->close();
+            return $result;
+        }
+        $prepare = $this->getPrepare($query, true);
+        if (!$prepare) {
+            throw new goDBExceptionPrepareNamed('Prepare "'.$query.'" not found');
+        }
+        if (is_string($cache)) {
+            if ($cache[0] != '#') {
+                $cache = '#'.$cache;
+            }
+            $this->cachePrepare[$cache] = $prepare;
+        }
+        return $prepare->execute($data, $fetch);
+    }
+
+    /**
+     * Создание именованного подготовленного выражения
+     *
+     * @param string $name
+     *        имя выражения
+     * @param string $query
+     *        шаблон выражения
+     * @return goDBPrepare
+     *         созданное подготовленное выражение
+     */
+    public function prepareNamed($name, $query) {
+        if (empty($name)) {
+            return false;
+        }
+        if ($name[0] != '#') {
+            $name = '#'.$name;
+        }
+        $prepare = new goDBPrepare($this, $query, true);
+        $this->cachePrepare[$name]  = $prepare;
+        $this->cachePrepare[$query] = $prepare;
+        return $prepare;
+    }
+
+    /**
+     * Чтение подготовленного выражения из кэша
+     *
+     * @param string $query
+     *        шаблон выражения или имя для именованного
+     * @param bool $create [optional]
+     *        создавать, если в кэше нет
+     * @return goDBPrepare
+     */
+    public function getPrepare($query, $create = false) {
+        if (empty($query)) {
+            return false;
+        }
+        if (isset($this->cachePrepare[$query])) {
+            return $this->cachePrepare[$query];
+        }
+        if ($query[0] == '#') {
+            if ($create) {
+                throw new goDBExceptionPrepareNamed('Cannot create prepare by one name');
+            }
+            return false;
+        }
+        $name = '#'.$query;
+        if (isset($this->cachePrepare[$name])) {
+            return $this->cachePrepare[$name];
+        }
+        if (!$create) {
+            return false;
+        }
+        $prepare = new goDBPrepare($this, $query);
+        $this->cachePrepare[$query] = $prepare;
+        return $prepare;
+    }
+
+    /**
+     * Получить объект ссылку
+     *
+     * @link http://pyha.ru/go/godb/godblink/
+     *
+     * @return goDBI
+     */
+    public function getLinkObject() {
+        return (new goDBLink($this));
+    }
 
     /**
      * Формирование запроса
@@ -176,6 +592,8 @@ class goDB extends mysqli
             case null:
             case 'no':
                 return $result;
+            case 'true':
+                return true;
             case 'id':
                 return $this->insert_id;
             case 'ar':
@@ -256,6 +674,9 @@ class goDB extends mysqli
             case 'el':
                 $r = $result->fetch_row();
                 return $r[0];
+            case 'bool':
+                $r = $result->fetch_row();
+                return (bool)$r[0];
         }
 
         throw new goDBExceptionFetchUnknown($fetch);
@@ -274,6 +695,15 @@ class goDB extends mysqli
     }
 
     /**
+     * Получить текущий префикс
+     * 
+     * @return string
+     */
+    public function getPrefix() {
+        return $this->tablePrefix;
+    }
+
+    /**
      * Установить значение отладки
      *
      * @link http://pyha.ru/go/godb/etc/
@@ -287,7 +717,16 @@ class goDB extends mysqli
         $this->queryDebug = $debug;
         return true;
     }
-    
+
+    /**
+     * Получить значение отладки
+     *
+     * @return mixed
+     */
+    public function getDebug() {
+        return $this->queryDebug;
+    }
+
     /**
      * Декорирование query()
      *
@@ -299,7 +738,16 @@ class goDB extends mysqli
     public function queryDecorated($wrapper) {
     	$this->queryWrapper = $wrapper;
     	return true;
-    }    
+    }
+
+    /**
+     * Получить декоратор запроса
+     *
+     * @return callback
+     */
+    public function getQueryDecorator() {
+        return $this->queryWrapper;
+    }
     
     /**
      * Количество записей в таблице, удволетворяющих условию
@@ -623,7 +1071,158 @@ class goDB extends mysqli
         }
         throw new goDBExceptionFetchUnknown($fetch);
     }
-  
+
+    /**
+     * Приведение различных форматов multiQuery к одному
+     *
+     * @param mixed $patterns
+     * @param mixed $datas
+     * @param mixed $fetches
+     * @return array
+     *     "queries": массив запросов виде (pattern, data, fetch)
+     *     "last":    last-fetch если указан
+     */
+    private function argsMultiQuery($patterns, $datas, $fetches) {
+        $queries = array();
+        if (is_array($patterns)) {
+            if (!isset($patterns[0])) {
+                return false;
+            }
+            if (is_array($patterns[0])) {
+                $queries = $patterns;
+            } else {
+                $countP = count($patterns);
+                $countD = count($datas);
+                if ($countP != $countD) {
+                    throw new goDBExceptionMulti('multi patterns != datas');
+                }
+                for ($i = 0; $i < $countP; $i++) {
+                    $queries[] = array($patterns[$i], $datas[$i]);
+                }
+            }
+        } else {
+            foreach ($datas as $data) {
+                $queries[] = array($patterns, $data);
+            }
+        }
+        $last = null;
+        if ($fetches) {
+            if (is_array($fetches)) {
+                $countQ = count($queries);
+                $countF = count($fetches);
+                if ($countQ != $countF) {
+                    throw new goDBExceptionMulti('multi queries != fetches');
+                }
+                for ($i = 0; $i < $countQ; $i++) {
+                    $queries[$i][2] = $fetches[$i];
+                }
+            } else {
+                $f = explode(':', $fetches, 2);
+                if (($f[0] == 'last') && (isset($f[1]))) {
+                    $last = $f[1];
+                } else {
+                    foreach ($queries as &$q) {
+                        $q[2] = $fetches;
+                    }
+                }
+            }
+        } else {            
+            foreach ($queries as &$q) {
+                $q[2] = isset($q[2]) ? $q[2] : 'true';
+            }
+        }
+        return array(
+            'queries' => $queries,
+            'last'    => $last,
+        );
+    }
+
+    /**
+     * Разбор результатов мультизапроса
+     *
+     * @throws goDBExceptionFetch
+     *
+     * @param array $queries
+     * @param mixed $fetches
+     * @param bool $last
+     * @param bool $transaction
+     * @return array
+     */
+    private function multiFetch($queries, $fetches, $last, $transaction) {
+        $results = array();
+        $notlast = count($queries);
+        foreach ($queries as $q) {
+            $notlast--;
+            $result = $this->store_result();
+            if ($this->errno) {
+                if ($transaction) {
+                    $this->transactionRollback();
+                }
+                throw new goDBExceptionQuery($q[0], $this->errno, $this->error);
+            }
+            if (!$last) {
+                $fetch = $q[2];
+                $r = $this->fetch($result, $fetch);
+                $results[] = $r;
+                if (is_object($result) && ($result !== $r)) {
+                    $result->free();
+                }
+            } elseif (!$notlast) {
+                $r = $this->fetch($result, $last);
+                $results = $r;
+                if (is_object($result) && ($result !== $r)) {
+                    $result->free();
+                }
+            } else {
+                if (is_object($result)) {
+                    $result->free();
+                }
+            }
+            if ($this->more_results()) {
+                $this->next_result();
+            } elseif ($notlast) {
+                if ($transaction) {
+                    $this->transactionRollback();
+                }
+                throw new goDBExceptionMulti('multi results < queires');
+            }
+        }
+        if ($this->more_results()) {
+            if ($transaction) {
+                $this->transactionRollback();
+            }
+            throw new goDBExceptionMulti('multi results > queires');
+        }
+        return $results;
+    }
+
+    /**
+     * Вывод отладочной информации
+     * 
+     * @param string $message
+     */
+    private function toDebug($message) {
+        if (!$this->queryDebug) {
+            return false;
+        }
+       	if ($this->queryDebug === true) {
+           	echo '<pre>'.htmlspecialchars($message).'</pre>';
+       	} else {
+       		call_user_func($this->queryDebug, $message);
+       	}
+        return true;
+    }
+
+    /**
+     * Деструктор объекта goDB
+     * Чистка кэшей и т.п.
+     */
+    public function __destruct() {
+        foreach ($this->cachePrepare as $p) {
+            $p->close();
+        }
+        $this->cachePrepare = null;
+    }
   
   /*** VARS: ***/
     
@@ -637,7 +1236,7 @@ class goDB extends mysqli
     /**
      * Разрешение отладки
      *
-     * @var bool
+     * @var mixed
      */
     protected $queryDebug = false;
 
@@ -656,19 +1255,50 @@ class goDB extends mysqli
     protected static $qQuery = 0;
 
     /**
+     * Текущий уровень вложенности транзакций
+     *
+     * @var int
+     */
+    protected $transactionLevel = 0;
+
+    /**
+     * Сохранённое значение автокоммита при старте транзакции
+     *
+     * @var bool
+     */
+    protected $transactionACStored;
+
+    /**
+     * Пометка текущей транзакции, как ошибочной при тихом откате
+     *
+     * @var bool
+     */
+    protected $transactionFailed = false;
+
+    /**
+     * Кэш подготовленных выражений
+     *
+     * Запросы хранятся как "query" => goDBPrepare
+     * Именованные как "#name" => goDBPrepare
+     *
+     * @var array
+     */
+    protected $cachePrepare = array();
+
+    /**
      * Список всех форматов представления результата по группам
      * @var array
      */
     private static $listFetchs = array(
         /* Возвращающие множество записей */
         'many' => array(
-            'assoc', 'row', 'col', 'object',
+            'assoc', 'row', 'col', 'object', 'kassoc',
             'iassoc', 'irow', 'icol', 'iobject',
             'vars', 'num',
         ),
         /* Возвращаюшие одну запись */
         'one' => array(
-            'rowassoc', 'rowrow', 'rowobject', 'el',
+            'rowassoc', 'rowrow', 'rowobject', 'el', 'bool',
         ),
         /* Другие */
         'other' => array(
@@ -788,6 +1418,19 @@ class goDBExceptionFetchUnexpected extends goDBExceptionFetch {
 }
 
 /**
+ * Исключения, связанные с транзакциями
+ */
+abstract class goDBExceptionTransaction extends goDBLogicException {}
+class goDBExceptionTransactionRollback extends goDBExceptionTransaction {}
+
+class goDBExceptionMulti extends goDBLogicException {}
+
+abstract class goDBExceptionPrepare extends goDBLogicException {}
+class goDBExceptionPrepareCreate extends goDBExceptionPrepare {}
+class goDBExceptionPrepareNamed extends goDBExceptionPrepare {}
+
+
+/**
  * Проблемы со списком баз данных в пространстве имен DB
  */
 abstract class goDBExceptionDB extends goDBLogicException {}
@@ -905,4 +1548,498 @@ class goDBResultObject extends goDBResult
     protected function getEl() {
         return $this->result->fetch_object();        
     }
+}
+
+/**
+ * Класс подготовленных выражений
+ *
+ * @link http://pyha.ru/go/godb/prepare/
+ */
+class goDBPrepare
+{
+
+    /**
+     * Конструктор
+     *
+     * @param goDB $db
+     *        объект базы для которой создаётся
+     * @param string $query
+     *        шаблон запроса
+     * @param bool $lazy [optional]
+     *        использовать ли отложенное создание
+     */
+    public function __construct(goDB $db, $query, $lazy = false) {
+        $this->db = $db;
+        $this->makeQuery($query);
+        if (!$lazy) {
+            $this->makeSTMT();
+        }
+    }
+
+    /**
+     * Деструктор
+     * Уничтожение выражения
+     */
+    public function __destruct() {
+        $this->close();
+    }
+
+    /**
+     * Выполнение запроса
+     *
+     * @throws goDBExceptionQuery
+     *
+     * @param array $data
+     *        набор входных данных
+     * @param string $fetch
+     *        формат представления результата
+     * @return mixed
+     *         результат в требуемом формате
+     */
+    public function execute($data = null, $fetch = null) {
+        if ($this->closed) {
+            return false;
+        }
+        if ($this->db->transactionFailed()) {
+            return false;
+        }
+        if (!$this->stmt) {
+            $this->makeSTMT();
+        }
+        $stmt = $this->stmt;
+        $data = $data ? $data : array();
+        $len = count($data);
+        if ($len != $this->paramsCount) {
+            if ($len < $this->paramsCount) {
+                throw new goDBExceptionDataNotEnough();
+            } else {
+                throw new goDBExceptionDataMuch();
+            }
+        }
+        if ($this->paramsCount > 0) {
+            $params = array($this->types);
+            foreach ($data as $d) {
+                $params[] = &$d;
+            }
+            call_user_func_array(array($stmt, 'bind_param'), $params);
+        }
+        $stmt->execute();
+        if ($stmt->errno) {
+            throw new goDBExceptionQuery('[PREPARE] '.$this->query, $stmt->errno, $stmt->error);
+        }
+        if ($this->fields) {
+            $rR = array();
+            $rA = array();
+            $num = 0;
+            foreach ($this->fields as $field) {
+                $rA[$field] = null;
+                $rR[$num] = &$rA[$field];
+                $num++;
+            }
+            call_user_func_array(array($stmt, 'bind_result'), $rR);
+            $result = $this->fetch($rR, $rA, $fetch);
+            unset($rR);
+            unset($rA);
+        } else {
+            $result = $this->fetch(true, true, $fetch);
+        }
+        $stmt->free_result();
+        unset($params);
+        unset($results);
+        return $result;
+    }
+
+    /**
+     * Выполнение запроса вызовом объекта
+     *
+     * @example $result = $prepare($data, $fetch);
+     *
+     * @uses PHP 5.3
+     *
+     * @param array $data
+     * @param string $fetch
+     * @return mixed
+     */
+    public function __invoke($data = null, $fetch = null) {
+        return $this->execute($data, $fetch);
+    }
+
+    /**
+     * Закрытие подключения
+     */
+    public function close() {
+        if ($this->closed) {
+            return false;
+        }
+        if ($this->stmt) {
+            $this->stmt->close();
+            $this->stmt = null;
+        }
+        $this->closed = true;
+        return true;
+    }
+
+    /**
+     * Получить объект mysqli_stmt для данного выражения
+     *
+     * @return mysqli_stmt
+     */
+    public function getSTMT() {
+        if ($this->closed) {
+            return false;
+        }
+        if (!$this->stmt) {
+            $this->makeSTMT();
+        }
+        return $this->stmt;
+    }
+
+    /**
+     * Получить строку с типами плейсхолдеров
+     *
+     * @return string
+     */
+    public function getTypes() {
+        return $this->types;
+    }
+
+    /**
+     * Закрыто ли уже выражение
+     *
+     * @return bool
+     */
+    public function isClosed() {
+        return $this->closed;
+    }
+
+    /**
+     * Получение шаблона запроса
+     *
+     * @return string
+     */
+    public function getQuery() {
+        return $this->query;
+    }
+
+    /**
+     * Создание подготовленного выражения mysqli
+     */
+    private function makeSTMT() {
+        $this->stmt = $this->db->prepare($this->query);
+        if (!$this->stmt) {
+            $message = 
+                'Error prepare "'.$this->query.'"; '.
+                    '#'.$this->db->errno.
+                    ': "'.$this->db->error.'"';
+            throw new goDBExceptionPrepareCreate($message);
+        }
+        if ($this->stmt->param_count != $this->paramsCount) {
+            $message = 'prepare "'.$this->query.'" error param_count';
+            throw new goDBExceptionPrepareCreate($message);
+        }
+        $meta = $this->stmt->result_metadata();
+        if ($meta) {
+            $fields = $meta->fetch_fields();
+            $this->fields = array();
+            foreach ($fields as $field) {
+                $this->fields[] = $field->name;
+            }
+            $meta->free();
+        } else {
+            $this->fields = false;
+        }
+        return true;
+    }
+
+    /**
+     * Разбор шаблона goDB на шаблон mysqli и строку типов
+     */
+    private function makeQuery($pattern) {
+        $reg = '~\?([idsb])?;?~';
+        if (!preg_match_all($reg, $pattern, $matches, PREG_SET_ORDER)) {
+            $this->query = $pattern;
+            $this->types = '';
+            $this->paramsCount = 0;
+            return true;
+        }
+        $this->paramsCount = count($matches);
+        $t = array();
+        foreach ($matches as $match) {
+            if (isset($match[1])) {
+                $t[] = $match[1];
+            } else {
+                $t[] = 's';
+            }
+        }
+        $this->types = implode('', $t);
+        if ($this->paramsCount > 0) {
+            $pattern = preg_replace($reg, '?', $pattern);
+        }
+        $this->query = $pattern;
+        return true;
+    }
+
+    /**
+     * Разбор результата
+     * @param array $row
+     * @param array $assoc
+     * @param string $fetch
+     * @return mixed
+     */
+    private function fetch($row, $assoc, $fetch) {
+        $fetch   = explode(':', $fetch, 2);
+        $options = isset($fetch[1]) ? $fetch[1] : '';
+        $fetch   = strtolower($fetch[0]);
+        $stmt    = $this->stmt;
+        switch ($fetch) {
+            case null:
+                return true;
+            case 'no':
+                throw new goDBExceptionFetchUnexpected($fetch);
+            case 'true':
+                return true;
+            case 'id':
+                return $stmt->insert_id;
+            case 'ar':
+                return $stmt->affected_rows;
+        }
+        if (!is_array($row)) {
+            throw new goDBExceptionFetchUnexpected($fetch);
+        }
+        switch ($fetch) {
+            case 'assoc':
+            case 'iassoc':
+                $result = array();
+                while ($stmt->fetch()) {
+                    $result[] = $this->aCopy($assoc);
+                }
+                return $result;
+            case 'row':
+            case 'irow':
+                $result = array();
+                while ($stmt->fetch()) {
+                    $result[] = $this->aCopy($row);
+                }
+                return $result;
+            case 'col':
+            case 'icol':
+                $result = array();
+                while ($stmt->fetch()) {
+                    $result[] = $row[0];
+                }
+                return $result;
+            case 'object':
+            case 'iobject':
+                $result = array();
+                while ($stmt->fetch()) {
+                    $result[] = (object)$this->aCopy($assoc);
+                }
+                return $result;
+            case 'vars':
+                $result = array();
+                while ($stmt->fetch()) {
+                    $return[$row[0]] = isset($row[1]) ? $row[1] : $row[0];
+                }
+                return $return;
+            case 'kassoc':
+                $result = array();
+                $key    = $options;
+                while ($stmt->fetch()) {
+                    if (!$key) {
+                        $key = key($assoc);
+                    }
+                    $result[$assoc[$key]] = $this->aCopy($assoc);
+                }
+                return $result;
+        }
+        
+        if ($fetch == 'num') {
+            $num = 0;
+            while ($stmt->fetch()) {
+                $num++;
+            }
+            return $num;
+        }
+
+        if (!$stmt->fetch()) {
+            return false;
+        }
+
+        switch ($fetch) {
+            case 'rowassoc':
+                return $this->aCopy($assoc);
+            case 'rowrow':
+                return $this->aCopy($row);
+            case 'rowobject':
+                return (object)$this->aCopy($assoc);
+            case 'el':                
+                return $row[0];
+            case 'bool':                
+                return (bool)$row[0];
+        }
+
+        throw new goDBExceptionFetchUnknown($fetch);
+    }
+
+    private function aCopy($A) {
+        $r = array();
+        foreach ($A as $k => $v) {
+            $r[$k] = $v;
+        }
+        return $r;
+    }
+
+    /**
+     * Связанный объект базы
+     * @var goDB
+     */
+    private $db;
+
+    /**
+     * Шаблон запроса
+     * @var string
+     */
+    private $query;
+
+    /**
+     * Строка типов
+     * @var string
+     */
+    private $types;
+
+    /**
+     * Количество входных параметров
+     * @var int
+     */
+    private $paramsCount;
+
+    /**
+     * Подготовленное выражение mysqli
+     * @var mysqli_stmt
+     */
+    private $stmt;
+
+    /**
+     * Закрыто ли подключение
+     * @var bool
+     */
+    private $closed = false;
+
+    /**
+     * Имена возвращаемых полей
+     * @var array
+     */
+    private $fields;
+}
+
+interface goDBI {}
+
+/**
+ * Объект-ссылка.
+ * Разделяет тоже подключение, но может иметь другие настройки.
+ */
+class goDBLink implements goDBI {
+
+    /**
+     * Конструктор
+     * 
+     * @param goDBI $db
+     *        объект, на который нужно сделать ссылку
+     */
+    public function __construct(goDBI $db) {
+        $this->db      = $db;
+        $this->prefix  = $db->getPrefix();
+        $this->debug   = $db->getDebug();
+        $this->wrapper = $db->getQueryDecorator();
+    }
+
+    /**
+     * Получить исходный объект
+     * @return goDB
+     */
+    public function godbObject() {
+        return $this->db;
+    }
+
+    public function __get($name) {
+        return $this->db->$name;
+    }
+    public function __set($name, $value) {
+        $this->db->$name = $value;
+    }
+    public function __call($name, $arguments) {
+        return call_user_func_array(array($this->db, $name), $arguments);
+    }
+
+    /**
+     * @override
+     * @param string $pattern
+     * @param array $data [optional]
+     * @param string $fetch [optional]
+     * @param string $prefix [optional]
+     */
+    public function query($pattern, $data = null, $fetch = null, $prefix = null) {
+        $prefix  = $prefix ? $prefix : $this->prefix;
+        $debug   = $this->db->getDebug();
+        $wrapper = $this->db->getQueryDecorator();
+        $this->db->setDebug($this->debug);
+        $this->db->queryDecorated($this->wrapper);
+        try {
+            $result  = $this->db->query($pattern, $data, $fetch, $prefix);
+        } catch (Exception $e) {
+            $this->db->setDebug($debug);
+            $this->db->queryDecorated($wrapper);
+            throw $e;
+        }
+        $this->db->setDebug($debug);
+        $this->db->queryDecorated($wrapper);
+        return $result;
+    }
+    
+    public function __invoke($pattern, $data = null, $fetch = null, $prefix = null) {
+        return $this->query($pattern, $data, $fetch, $prefix);
+    }    
+
+    /**
+     * @override
+     * @param string $pattern
+     * @param array $data [optional]
+     * @param string $prefix [optional]
+     */
+    public function makeQuery($pattern, $data = null, $prefix = null) {
+        $prefix = $prefix ? $prefix : $this->prefix;
+        return $this->db->makeQuery($pattern, $data, $prefix);
+    }
+
+
+
+    public function setPrefix($prefix) {
+        $this->prefix = $prefix;
+        return true;
+    }
+    public function getPrefix() {
+        return $this->prefix;
+    }
+    public function setDebug($debug = true) {
+        $this->debug = $debug;
+        return true;
+    }
+    public function getDebug() {
+        return $this->debug;
+    }
+    public function queryDecorated($wrapper) {
+    	$this->wrapper = $wrapper;
+    	return true;
+    }
+    public function getQueryDecorator() {
+        return $this->wrapper;
+    }
+
+    /**
+     * Исходный объект
+     * @var goDB
+     */
+    private $db;
+
+    private $prefix, $debug, $wrapper;
 }
