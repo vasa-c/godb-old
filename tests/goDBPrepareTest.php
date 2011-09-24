@@ -341,4 +341,24 @@ class goDBPrepareTest extends goDBTestBase {
         $prepare->close();
     }
 
+    public function testMany() {
+        $db = $this->db(true);
+
+        $db->query('TRUNCATE `godb`');
+
+        $prepare = $db->prepare('INSERT INTO `godb` VALUES (NULL, ?, ?)', true);
+
+        $prepare->execute(array(2, 'two'));
+        $prepare->execute(array(4, 'four'));
+        $prepare->execute(array(6, 'six'));
+
+        $expected = array(
+            array(1, 2, 'two'),
+            array(2, 4, 'four'),
+            array(3, 6, 'six'),
+        );
+        $result = $db->query('SELECT * FROM `godb` ORDER BY `id` ASC', null, 'row');
+        $this->assertEquals($expected, $result);
+    }
+
 }

@@ -3,7 +3,7 @@
  * Библиотека для работы с базой данных MySQL
  * 
  * @package   goDB
- * @version   1.3.0 (11 октября 2010)
+ * @version   1.3.1 (10 января 2011)
  * @link      http://pyha.ru/go/godb/
  * @author    Григорьев Олег aka vasa_c (http://blgo.ru/blog/)
  * @copyright &copy; Григорьев Олег & PyhaTeam, 2007-2010
@@ -1618,7 +1618,7 @@ class goDBPrepare
         }
         if ($this->paramsCount > 0) {
             $params = array($this->types);
-            foreach ($data as $d) {
+            foreach ($data as &$d) {
                 $params[] = &$d;
             }
             call_user_func_array(array($stmt, 'bind_param'), $params);
