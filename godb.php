@@ -3,7 +3,7 @@
  * Библиотека для работы с базой данных MySQL
  * 
  * @package   goDB
- * @version   1.2.0 (14 сентября 2010)
+ * @version   1.2.1 (27 сентября 2010)
  * @author    Григорьев Олег aka vasa_c
  * @copyright &copy; PyhaTeam, 2007-2010
  * @license   http://www.gnu.org/copyleft/lesser.html LGPL
@@ -35,13 +35,13 @@ class goDB extends mysqli
     		$port     = isset($host['port'])     ? $host['port']     : null;
     		$socket   = isset($host['socket'])   ? $host['socket']   : null;
             $charset  = isset($host['charset'])  ? $host['charset']  : null;
-    		if (isSet($host['prefix'])) {
+    		if (isset($host['prefix'])) {
     			$this->setPrefix($host['prefix']);
     		}
-    		if (isSet($host['debug'])) {
+    		if (isset($host['debug'])) {
     			$this->setDebug($host['debug']);
     		}
-    		$host = isSet($host['host']) ? $host['host'] : null;
+    		$host = isset($host['host']) ? $host['host'] : null;
     	}
     	if (!$port) {
         	$host = explode(':', $host, 2);
@@ -288,7 +288,7 @@ class goDB extends mysqli
     	} elseif (!$name) {
             $name = self::baseName;
         }
-        if (isSet(self::$dbList[$name])) {
+        if (isset(self::$dbList[$name])) {
             throw new goDBExceptionDBAlready($name);
         }
         if (!$post) {
@@ -308,7 +308,7 @@ class goDB extends mysqli
      * @param string $name [optional]
      */
     public static function setDB(goDB $db, $name = self::baseName) {
-        if (isSet(self::$dbList[$name])) {
+        if (isset(self::$dbList[$name])) {
             throw new goDBExceptionDBAlready($name);
         }
         self::$dbList[$name] = $db;
@@ -684,7 +684,7 @@ abstract class goDBResult implements Iterator, ArrayAccess, Countable {
 
     public function get($num, $index = false)  {
         if ($num >= $this->numRows) {
-            return false;
+            return null;
         }
         $this->result->data_seek($num);
         $r = $this->getEl();
@@ -692,10 +692,10 @@ abstract class goDBResult implements Iterator, ArrayAccess, Countable {
             return $r;
         }
         if (!is_array($r)) {
-            return false;
+            return null;
         }
-        if (!isSet($r[$index])) {
-            return false;
+        if (!isset($r[$index])) {
+            return null;
         }
         return $r[$index];
     }
@@ -707,7 +707,7 @@ abstract class goDBResult implements Iterator, ArrayAccess, Countable {
         return false;
     }
     public function offsetExists($offset) {
-        return (($offset >= 0) && ($offset < $numRows));
+        return (($offset >= 0) && ($offset < $this->numRows));
     }
     public function offsetUnset($offset) {
         return false;
