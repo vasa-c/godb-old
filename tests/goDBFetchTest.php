@@ -163,6 +163,21 @@ class goDBFetchTest extends goDBTestBase {
         $this->assertTrue(isset($fiassoc[2]));
         $this->assertFalse(isset($fiassoc[20]));
     }
+    
+    /**
+     * Очищать результат, используемый в итераторе нельзя
+     *
+     * @covers query
+     */
+    public function testIteratorFree() {
+        $db     = $this->db(true);
+        $summ   = 0;
+        $result = $db->query('SELECT `number` FROM `godb` LIMIT 5', null, 'icol');        
+        foreach ($result as $number) {
+            $summ += $number;
+        }
+        $this->assertEquals(16, $summ);
+    }
 
     /**
      * vars: "переменная" => "значение"

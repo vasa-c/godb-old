@@ -3,7 +3,7 @@
  * Библиотека для работы с базой данных MySQL
  * 
  * @package   goDB
- * @version   1.3.1 (10 января 2011)
+ * @version   1.3.2 (31 января 2011)
  * @link      http://pyha.ru/go/godb/
  * @author    Григорьев Олег aka vasa_c (http://blgo.ru/blog/)
  * @copyright &copy; Григорьев Олег & PyhaTeam, 2007-2010
@@ -115,7 +115,7 @@ class goDB extends mysqli implements goDBI
             throw new goDBExceptionQuery($query, $this->errno, $this->error);
         }
         $return = $this->fetch($result, $fetch);
-        if ((is_object($result)) and ($result !== $return)) {
+        if ((is_object($result)) and ($result !== $return) and (!$this->isiterator)) {
             $result->free();
         }
         return $return;
@@ -477,6 +477,7 @@ class goDB extends mysqli implements goDBI
      * @param string $query
      *        шаблон выражения
      * @return goDBPrepare
+
      *         созданное подготовленное выражение
      */
     public function prepareNamed($name, $query) {
@@ -588,6 +589,7 @@ class goDB extends mysqli implements goDBI
         $fetch   = explode(':', $fetch, 2);
         $options = isset($fetch[1]) ? $fetch[1] : '';
         $fetch   = strtolower($fetch[0]);
+        $this->isiterator = false;
         switch ($fetch) {
             case null:
             case 'no':
@@ -646,12 +648,16 @@ class goDB extends mysqli implements goDBI
                 }
                 return $return;
             case 'iassoc':
+                $this->isiterator = true;
                 return new goDBResultAssoc($result);
             case 'irow':
+                $this->isiterator = true;            
                 return new goDBResultRow($result);
             case 'icol':
+                $this->isiterator = true;            
                 return new goDBResultCol($result);
             case 'iobject':
+                $this->isiterator = true;            
                 return new goDBResultObject($result);
         }
 
@@ -1318,6 +1324,8 @@ class goDB extends mysqli implements goDBI
     private $_dataCnt;
     private $_phType;
     private $_prefix;
+    
+    private $isiterator;
 }
 
 
