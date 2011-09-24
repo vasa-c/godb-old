@@ -47,6 +47,10 @@ class goDBTest extends PHPUnit_Framework_TestCase {
      * Здесь же создаётся объект self::$db, используемый в остальных тестах
      * 
      * @group  create
+     * @group  placeholders
+     * @group  fetch
+     * @group  namespace
+     * @group  exceptions
      * @covers goDB::__construct
      */
     public function testCreate() {
@@ -133,6 +137,37 @@ class goDBTest extends PHPUnit_Framework_TestCase {
                 'INSERT INTO `table` VALUES (?in,?int-null,?in,?in)',
                 $data,
                 'INSERT INTO `table` VALUES (12,NULL,0,11)',
+            ),
+        );
+    }
+
+    /**
+     * BOOL: ?bool
+     * @depends  testCreate
+     * @group    placeholders
+     * @dataProvider providerPlaceholderBool
+     * @covers   goDB::makeQuery
+     */
+    public function testPlaceholderBool($pattern, $data, $query) {
+        $result = $this->db()->makeQuery($pattern, $data);
+        $this->assertEquals($query, $result);
+    }
+    public function providerPlaceholderBool() {
+        return array(
+            array(
+                'INSERT INTO `table` VALUES (?,?i,?bool)',
+                array('5', 5, 5),
+                'INSERT INTO `table` VALUES ("5",5,"1")',
+            ),
+            array(
+                'INSERT INTO `table` VALUES (?,?i,?bool)',
+                array(false, false, false),
+                'INSERT INTO `table` VALUES ("",0,"0")',
+            ),
+            array(
+                'INSERT INTO `table` VALUES (?,?i,?bool)',
+                array('qwe', 'qwe', 'qwe'),
+                'INSERT INTO `table` VALUES ("qwe",0,"1")',
             ),
         );
     }
@@ -438,7 +473,7 @@ class goDBTest extends PHPUnit_Framework_TestCase {
     public function testFetchObject() {
         $db = $this->db(true);
         $pattern = 'SELECT `number`,`caption`,`id` FROM `godb` ORDER BY `id` ASC LIMIT 4';
-        $result  = $this->db()->query($pattern, null, 'object');
+        $result  = $db->query($pattern, null, 'object');
         $this->assertType('array', $result);
         $this->assertEquals(4, count($result));
         $this->assertArrayHasKey(2, $result);
@@ -452,11 +487,38 @@ class goDBTest extends PHPUnit_Framework_TestCase {
      * @group   fetch
      * @covers  goDB::fetch
      */
-    public function testFetchOCol() {
+    public function testFetchCol() {
         $db = $this->db(true);
         $pattern  = 'SELECT `number` FROM `godb` ORDER BY `id` ASC LIMIT ?i,?i';
         $expected = array(5, 4);
         $result   = $this->db()->query($pattern, array(2,2), 'col');
+        $this->assertEquals($expected, $result);
+    }
+
+    /**
+     * @depends testCreate
+     * @group   fetch
+     * @covers  goDB::fetch
+     */
+    public function testFetchKAssoc() {
+        $db = $this->db(true);
+
+        $pattern  = 'SELECT `id`,`number`,`caption` FROM `godb` ORDER BY `id` ASC LIMIT 2,3';
+        $result   = $db->query($pattern, null, 'kassoc');
+        $expected = array(
+            '3' => array('id' => '3', 'number' => '5', 'caption' => 'five'),
+            '4' => array('id' => '4', 'number' => '4', 'caption' => null),
+            '5' => array('id' => '5', 'number' => '3', 'caption' => 'double'),
+        );
+        $this->assertEquals($expected, $result);
+
+        $pattern  = 'SELECT `id`,`number`,`caption` FROM `godb` ORDER BY `id` ASC LIMIT 2,3';
+        $result   = $db->query($pattern, null, 'kassoc:number');
+        $expected = array(
+            '5' => array('id' => '3', 'number' => '5', 'caption' => 'five'),
+            '4' => array('id' => '4', 'number' => '4', 'caption' => null),
+            '3' => array('id' => '5', 'number' => '3', 'caption' => 'double'),
+        );
         $this->assertEquals($expected, $result);
     }
 
@@ -513,6 +575,7 @@ class goDBTest extends PHPUnit_Framework_TestCase {
      */
     public function testFetchVars() {
         $db = $this->db(true);
+
         $pattern = 'SELECT `caption`,`number` FROM `godb` WHERE `caption` IS NOT NULL';
         $result  = $db->query($pattern, null, 'vars');
         $this->assertType('array', $result);
@@ -522,6 +585,17 @@ class goDBTest extends PHPUnit_Framework_TestCase {
         $this->assertEquals(1, $result['one']);
         $this->assertEquals(3, $result['three']);
         $this->assertEquals(3, $result['double']);
+
+        $pattern = 'SELECT `caption` FROM `godb` WHERE `caption` IS NOT NULL';
+        $result  = $db->query($pattern, null, 'vars');
+        $this->assertType('array', $result);
+        $this->assertArrayHasKey('one', $result);
+        $this->assertArrayHasKey('three', $result);
+        $this->assertArrayHasKey('double', $result);
+        $this->assertEquals('one', $result['one']);
+        $this->assertEquals('three', $result['three']);
+        $this->assertEquals('double', $result['double']);
+
     }
 
     /**
@@ -934,22 +1008,48 @@ class goDBTest extends PHPUnit_Framework_TestCase {
      * @expectedException goDBExceptionDataPlaceholder
      * @group exceptions
      */
-    public function testExceptionDataPlaceholder() {
+    public function testExceptionDataPlaceholderUnknown() {
         $pattern = 'INSERT INTO `godb` VALUES(?,?unknown,?)';
         $data    = array(1, 2, 3);
         $this->db()->query($pattern, $data);
     }
 
     /**
-     * Неизвестный формат разбора
+     * Именованный плейсхолдер без имени
      * @depends testCreate
      * @groups  exceptions
-     * @expectedException goDBExceptionFetch
+     * @expectedException goDBExceptionDataPlaceholder
      * @group exceptions
      */
-    public function testExceptionFetch() {
+    public function testExceptionDataPlaceholderNamed() {
+        $pattern = 'INSERT INTO `godb` VALUES(?:a,?i:,?:c)';
+        $data    = array('a' => 1, 'b' => 2, 'c' => 3);
+        $this->db()->query($pattern, $data);
+    }
+
+    /**
+     * Неизвестный формат представления
+     * @depends testCreate
+     * @groups  exceptions
+     * @expectedException goDBExceptionFetchUnknown
+     * @group exceptions
+     */
+    public function testExceptionFetchUnknown() {
         $pattern = 'SHOW TABLES';
         $this->db()->query($pattern, null, 'unknown');
+    }
+
+    /**
+     * Неожданный формат представления
+     * @depends testCreate
+     * @groups  exceptions
+     * @expectedException goDBExceptionFetchUnexpected
+     * @group exceptions
+     */
+    public function testExceptionFetchUnexpected() {
+        $db = $this->db(true);
+        $pattern = 'UPDATE `godb` SET `number`=1 WHERE `id`>100';
+        $db->query($pattern, null, 'assoc');
     }
     
     /**

@@ -3,11 +3,12 @@
  * Библиотека для работы с базой данных MySQL
  * 
  * @package   goDB
- * @version   1.2.1 (27 сентября 2010)
- * @author    Григорьев Олег aka vasa_c
- * @copyright &copy; PyhaTeam, 2007-2010
+ * @version   1.2.2 (28 сентября 2010)
+ * @link      http://pyha.ru/go/godb/
+ * @author    Григорьев Олег aka vasa_c (http://blgo.ru/blog/)
+ * @copyright &copy; Григорьев Олег & PyhaTeam, 2007-2010
  * @license   http://www.gnu.org/copyleft/lesser.html LGPL
- * @uses      mysqli
+ * @uses      php_mysqli (http://php.net/mysqli)
  */
 
 class goDB extends mysqli 
@@ -16,32 +17,45 @@ class goDB extends mysqli
   /*** PUBLIC: ***/
     
     /**
-     * Конструктор. От mysqli отличается тем, что генерирует исключение при ошибке подключения
+     * Конструктор.
      *
-     * @exception goDBExceptionConnect
+     * Отличия от конструктора mysqli (http://php.net/manual/en/mysqli.connect.php):
+     * 1. Исключение при ошибке подключения
+     * 2. Дополнительный формат вызова: один аргумент - массив параметров
+     * 3. Установка кодировки
      *
-     * @param string $host      [optional]
-     * @param string $username  [optional]
-     * @param string $passwd    [optional]
-     * @param string $dbname    [optional]
-     * @param int    $port      [optional]
-     * @param string $socket    [optional]
+     * @link http://pyha.ru/go/godb/connect/
+     *
+     * @throws goDBExceptionConnect
+     *         не подключиться или не выбрать базу
+     *
+     * @param mixed $host [optional]
+     *        хост для подключения (возможен вариант "host:port")
+     *        либо массив всех параметров
+     * @param string $username [optional]
+     *        имя пользователя mysql
+     * @param string $passwd [optional]
+     *        пароль пользователя mysql
+     * @param string $dbname [optional]
+     *        имя базы данных
+     * @param int $port [optional]
+     *        порт для подключения
+     *        в случае указания аргументом и в строке $host используется аргумент
+     * @param string $socket [optional]
+     *        mysql-сокет для подключения
      */
     public function __construct($host = null, $username = null, $passwd = null, $dbname = null, $port = null, $socket = null) {       
     	if (is_array($host)) {
-    		$username = isset($host['username']) ? $host['username'] : null;
-    		$passwd   = isset($host['passwd'])   ? $host['passwd']   : null;
-    		$dbname   = isset($host['dbname'])   ? $host['dbname']   : null;
-    		$port     = isset($host['port'])     ? $host['port']     : null;
-    		$socket   = isset($host['socket'])   ? $host['socket']   : null;
-            $charset  = isset($host['charset'])  ? $host['charset']  : null;
-    		if (isset($host['prefix'])) {
-    			$this->setPrefix($host['prefix']);
-    		}
-    		if (isset($host['debug'])) {
-    			$this->setDebug($host['debug']);
-    		}
-    		$host = isset($host['host']) ? $host['host'] : null;
+            $config = $host;
+            $fields = array(
+                'host', 'username', 'passwd', 'dbname', 'port', 
+                'socket', 'charset', 'debug', 'prefix',
+            );
+            foreach ($fields as $field) {
+                $$field = isset($config[$field]) ? $config[$field] : null;
+            }
+    		$this->setPrefix($prefix);
+   			$this->setDebug($debug);
     	}
     	if (!$port) {
         	$host = explode(':', $host, 2);
@@ -60,17 +74,29 @@ class goDB extends mysqli
     /**
      * Выполнение запроса к базе
      *
-     * @exception goDBExceptionQuery ошибка при запросе
+     * @link http://pyha.ru/go/godb/query/
+     *
+     * @throws goDBExceptionQuery
+     *         ошибка при запросе
+     * @throws goDBExceptionData
+     *         ошибочный шаблон или входные данные
+     * @throws goDBExceptionFetch
+     *         неизвестный или неожиданный формат представления
      * 
-     * @param  string $pattern sql-запрос или строка-шаблон с плейсхолдерами
-     * @param  array  $data    [optional] массив входных данных
-     * @param  string $fetch   [optional] формат результата
-     * @param  string $prefix  [optional] префикс имен таблиц
-     * @return mixed  результат запроса в заданном формате     
+     * @param string $pattern
+     *        sql-запрос или строка-шаблон с плейсхолдерами
+     * @param array $data [optional]
+     *        массив входных данных
+     * @param string $fetch [optional]
+     *        требуемый формат представления результата
+     * @param string $prefix [optional]
+     *        префикс имен таблиц
+     * @return mixed
+     *         результат запроса в заданном формате
      */
     public function query($pattern, $data = null, $fetch = null, $prefix = null) {        
 		self::$qQuery++;
-    	$query = self::makeQuery($pattern, $data, $prefix);
+    	$query = $this->makeQuery($pattern, $data, $prefix);
         if ($this->queryWrapper) {
             $query = call_user_func_array($this->queryWrapper, array($query));
             if (!$query) {
@@ -79,7 +105,7 @@ class goDB extends mysqli
         }
         if ($this->queryDebug) {
         	if ($this->queryDebug === true) {
-            	print '<pre>'.htmlSpecialChars($query).'</pre>';
+            	echo '<pre>'.htmlSpecialChars($query).'</pre>';
         	} else {
         		call_user_func($this->queryDebug, $query);
         	}
@@ -98,9 +124,17 @@ class goDB extends mysqli
     /**
      * Формирование запроса
      *
-     * @param string $pattern строка-шаблон с плейсхолдерами
-     * @param array  $data    массив входных данных
-     * @param string $prefix  [optional] префикс таблиц
+     * @link http://pyha.ru/go/godb/query/#ph-list
+     *
+     * @throws goDBExceptionData
+     *         ошибочный шаблон или несответствие ему входных данных
+     *
+     * @param string $pattern
+     *        строка-шаблон с плейсхолдерами
+     * @param array $data
+     *        массив входных данных
+     * @param string $prefix [optional]
+     *        префикс таблиц
      */
     public function makeQuery($pattern, $data, $prefix = null) {
         $prefix = ($prefix === null) ? $this->tablePrefix : $prefix;    
@@ -117,103 +151,120 @@ class goDB extends mysqli
             throw new goDBExceptionDataMuch('It is too much data');
         }
         return $query;
-    }    
+    }
     
     /**
      * Разбор результата в нужном формате
      *
-     * @param  mysqli_result $result результат
-     * @param  string        $fetch  формат
+     * @link http://pyha.ru/go/godb/fetch/
+     *
+     * @throws goDBExceptionFetch
+     *         неизвестный или неожиданный формат представления
+     *
+     * @param mysqli_result $result
+     *        результат запроса
+     * @param string $fetch
+     *        требуемый формат представления
      * @return mixed
+     *         результат в требуемом формате
      */
     public function fetch($result, $fetch) {
-        $fetch = strToLower($fetch);
-        if ((!$fetch) || ($fetch == 'no')) {
-            return $result;
+        $fetch   = explode(':', $fetch, 2);
+        $options = isset($fetch[1]) ? $fetch[1] : '';
+        $fetch   = strtolower($fetch[0]);
+        switch ($fetch) {
+            case null:
+            case 'no':
+                return $result;
+            case 'id':
+                return $this->insert_id;
+            case 'ar':
+                return $this->affected_rows;
         }
-        if ($fetch == 'id') {
-            return $this->insert_id;
+        if (!is_object($result)) {
+            $this->checkFetch($fetch);
+            throw new goDBExceptionFetchUnexpected($fetch);
         }
-        if ($fetch == 'ar') {
-            return $this->affected_rows;
+        switch ($fetch) {
+            case 'assoc':
+                $return = array();
+                while ($row = $result->fetch_assoc()) {
+                    $return[] = $row;
+                }
+                return $return;
+            case 'row':
+                $return = array();
+                while ($row = $result->fetch_row()) {
+                    $return[] = $row;
+                }
+                return $return;
+            case 'col':
+                $return = array();
+                while ($row = $result->fetch_row()) {
+                    $return[] = $row[0];
+                }
+                return $return;
+            case 'object':
+                $return = array();
+                while ($row = $result->fetch_object()) {
+                    $return[] = $row;
+                }
+                return $return;
+            case 'vars':
+                $return = array();
+                while ($row = $result->fetch_row()) {
+                    $return[$row[0]] = isset($row[1]) ? $row[1] : $row[0];
+                }
+                return $return;
+            case 'kassoc':
+                $return = array();
+                $key    = $options;
+                while ($row = $result->fetch_assoc()) {
+                    if (!$key) {
+                        reset($row);
+                        $key = key($row);
+                    }
+                    $return[$row[$key]] = $row;
+                }
+                return $return;
+            case 'iassoc':
+                return new goDBResultAssoc($result);
+            case 'irow':
+                return new goDBResultRow($result);
+            case 'icol':
+                return new goDBResultCol($result);
+            case 'iobject':
+                return new goDBResultObject($result);
         }
-        $numRows = $result->num_rows;
+
+        $num = $result->num_rows;
         if ($fetch == 'num') {
-            return $numRows;
+            return $num;
         }
-        if ($fetch == 'row') {
-            $A = Array();
-            for ($i = 0; $i < $numRows; $i++) {
-                $A[] = $result->fetch_row();
-            }
-            return $A;
-        }
-        if ($fetch == 'assoc') {
-            $A = Array();
-            for ($i = 0; $i < $numRows; $i++) {
-                $A[] = $result->fetch_assoc();
-            }
-            return $A;
-        }
-        if ($fetch == 'col') {
-            $A = Array();
-            for ($i = 0; $i < $numRows; $i++) {
-                $r = $result->fetch_row();
-                $A[] = $r[0];
-            }
-            return $A;
-        }
-        if ($fetch == 'object') {
-        	$A = Array();
-        	for ($i = 0; $i < $numRows; $i++) {
-        		$A[] = $result->fetch_object();        		
-        	}
-        	return $A;
-        }
-        if ($fetch == 'vars') {
-        	$A = Array();
-        	for ($i = 0; $i < $numRows; $i++) {
-        		$r = $result->fetch_row();
-        		$A[$r[0]] = $r[1];
-        	}
-        	return $A;
-        }
-        if ($fetch == 'irow') {
-            return new goDBResultRow($result);
-        }
-        if ($fetch == 'iassoc') {
-            return new goDBResultAssoc($result);
-        }
-        if ($fetch == 'icol') {
-            return new goDBResultCol($result);
-        }
-        if ($fetch == 'iobject') {
-            return new goDBResultObject($result);
-        }        
-        if ($numRows == 0) {
-            if (!in_array($fetch, array('rowrow', 'rowassoc', 'rowobject', 'el'))) {
-                throw new goDBExceptionFetch($fetch);
-            }
+        if ($num == 0) {
+            $this->checkFetch($fetch, 'one');
             return false;
         }
-        if ($fetch == 'rowrow') {
-            return $result->fetch_row();
+
+        switch ($fetch) {
+            case 'rowassoc':
+                return $result->fetch_assoc();
+            case 'rowrow':
+                return $result->fetch_row();
+            case 'rowobject':
+                return $result->fetch_object();
+            case 'el':
+                $r = $result->fetch_row();
+                return $r[0];
         }
-        if ($fetch == 'rowassoc') {
-            return $result->fetch_assoc();
-        }
-        if ($fetch == 'rowobject') {
-            return $result->fetch_object();
-        }        
-        if ($fetch == 'el') {
-            $r = $result->fetch_row();
-            return $r[0];
-        }
-        throw new goDBExceptionFetch($fetch);
+
+        throw new goDBExceptionFetchUnknown($fetch);
     }
 
     /**
      * Установка префикса таблиц
+     *
+     * @link http://pyha.ru/go/godb/etc/
      *
      * @param string $prefix
      */
@@ -225,7 +276,12 @@ class goDB extends mysqli
     /**
      * Установить значение отладки
      *
-     * @param bool $debug
+     * @link http://pyha.ru/go/godb/etc/
+     *
+     * @param mixed $debug
+     *        true:     вывод в поток
+     *        false:    отключение отладки
+     *        callback: вызов указанной функции
      */
     public function setDebug($debug = true) {
         $this->queryDebug = $debug;
@@ -235,7 +291,10 @@ class goDB extends mysqli
     /**
      * Декорирование query()
      *
-     * @param callback $wrapper функция-декоратор
+     * @link http://pyha.ru/go/godb/etc/
+     *
+     * @param callback $wrapper
+     *        функция-декоратор
      */
     public function queryDecorated($wrapper) {
     	$this->queryWrapper = $wrapper;
@@ -261,21 +320,41 @@ class goDB extends mysqli
     }    
  
   /*** STATIC: ***/
-  
-      const baseName = 'base';
+
+    /**
+     * Имя по умолчанию в пространстве имён
+     * @const string
+     */
+    const baseName = 'base';
       
     /**
      * Создание базы и сохранение в пространстве имен
      *
-     * @exception goDBExceptionDBAlready заданное имя уже существует
+     * Возможно указание как всех аргументов метода,
+     * так и указание единственного - конфигурационного массива
+     *
+     * @link http://pyha.ru/go/godb/namespace/
+     *
+     * @throws goDBExceptionDBAlready
+     *         заданное имя уже существует
+     * @throws goDBExceptionConnect
+     *         ошибка подключения, если не используется отложенное подключение
      * 
-     * @param  string $host     хост - возможно указание порта через ":"
-     * @param  string $username
-     * @param  string $passwd
-     * @param  string $dbname
-     * @param  string $name     [optional] наименование
-     * @param  bool   $post     [optional] отложенное подключение
+     * @param mixed $host
+     *        хост - возможно указание порта через ":"
+     *        либо конфигурационный массив
+     * @param string $username [optional]
+     *        имя пользователя базы
+     * @param string $passwd [optional]
+     *        пароль пользователя базы
+     * @param string $dbname [optional]
+     *        имя базы данных
+     * @param string $name [optional]
+     *        наименование данной базы в пространстве имён
+     * @param bool $post [optional]
+     *        использовать ли отложенное подключение
      * @return mixed
+     *         объект базы данные если не используется отложенное подключение
      */
     public static function makeDB($host, $username = null, $passwd = null, $dbname = null, $name = null, $post = false) {
     	if (is_array($host)) {
@@ -302,9 +381,10 @@ class goDB extends mysqli
     /**
      * Сохранить базу в пространстве имен
      *
-     * @exception goDBExceptionAlready имя занято
+     * @throws goDBExceptionAlready
+     *         имя занято
      * 
-     * @param goDB   $db
+     * @param goDB $db
      * @param string $name [optional]
      */
     public static function setDB(goDB $db, $name = self::baseName) {
@@ -318,11 +398,15 @@ class goDB extends mysqli
     /**
      * Ассоциация с базой
      *
-     * @exception goDBExceptionDBAlready  имя новой занято
-     * @exception goDBExceptionDBNotFound старой базы нет
+     * @throws goDBExceptionDBAlready
+     *         имя новой занято
+     * @throws goDBExceptionDBNotFound
+     *         целевая база отсутствует
      * 
-     * @param string $one новая база
-     * @param string $two та, с которой ассоциируется
+     * @param string $one
+     *        новая база
+     * @param string $two
+     *        та, с которой ассоциируется
      */
     public static function assocDB($one, $two) {
     	if (isset(self::$dbList[$one])) {
@@ -338,10 +422,12 @@ class goDB extends mysqli
     /**
      * Получить базу из пространства имен
      *
-     * @exception goDBExceptionDBNotFound нет базы с таким именем
-     * @exception goDBExceptionConnect    может произойти ошибка при отложенном подключении
+     * @throws goDBExceptionDBNotFound
+     *         нет базы с таким именем
+     * @throws goDBExceptionConnect
+     *         может произойти ошибка при отложенном подключении
      * 
-     * @param  string $name
+     * @param string $name
      * @return goDB
      */
     public static function getDB($name = self::baseName) {
@@ -358,13 +444,20 @@ class goDB extends mysqli
     }
 
     /**
-     * Делегирование запроса к нужному объекту БД
+     * Делегирование запроса к нужному объекту БД из пространства имён
      *
-     * @param  string $pattern
-     * @param  array  $data
-     * @param  string $fetch
-     * @param  string $prefix
-     * @param  string $name
+     * @throws goDBException
+     *         - нет такой базы
+     *         - ошибка отложенного подключения
+     *         - ошибки шаблона и данных
+     *         - ошиочный формат разбора
+     *         - ошибочный запрос
+     *
+     * @param string $pattern [optional]
+     * @param array  $data [optional]
+     * @param string $fetch [optional]
+     * @param string $prefix [optional]
+     * @param string $name [optional]
      * @return mixed
      */
     public static function queryDB($pattern, $data = null, $fetch = null, $prefix = null, $name = self::baseName) {
@@ -385,7 +478,7 @@ class goDB extends mysqli
     /**
      * Вспомагательная функция для формирования запроса
      *
-     * @param  array  $matches
+     * @param array $matches
      * @return string
      */
     private function _makeQuery($matches) {
@@ -404,6 +497,9 @@ class goDB extends mysqli
                 if (isset($matches[3])) {
                     $type = 'n';
                     $name = $matches[3];
+                    if (empty($name)) {
+                        throw new goDBExceptionDataPlaceholder($matches[0]);
+                    }
                 } else {
                     /* ":" поставлена, а имя не указано */
                     throw new goDBExceptionDataPlaceholder($matches[0]);
@@ -441,6 +537,8 @@ class goDB extends mysqli
             case 'i':
             case 'int':
                 return (0 + $value);
+            case 'bool':
+                return $value ? '"1"' : '"0"';
             case 'in':
             case 'ni':
             case 'int-null':
@@ -498,6 +596,33 @@ class goDB extends mysqli
                 throw new goDBExceptionDataPlaceholder($matches[0]);
         }
     }
+
+    /**
+     * Проверка формата разбора
+     *
+     * @throws goDBExceptionFetchUnknown
+     *         неизвестный формат
+     *
+     * @param string $fetch
+     *        формат разбора
+     * @param string $groups [optional]
+     *        в какой группе искать
+     *        не указана - во всех
+     */
+    private function checkFetch($fetch, $group = null) {
+        if ($group) {
+            if (in_array($fetch, self::$listFetchs[$group])) {
+                return true;
+            }
+        } else {
+            foreach (self::$listFetchs as $fetchs) {
+                if (in_array($fetch, $fetchs)) {
+                    return true;
+                }
+            }
+        }
+        throw new goDBExceptionFetchUnknown($fetch);
+    }
   
   
   /*** VARS: ***/
@@ -529,7 +654,28 @@ class goDB extends mysqli
      * @var int
      */
     protected static $qQuery = 0;
-    
+
+    /**
+     * Список всех форматов представления результата по группам
+     * @var array
+     */
+    private static $listFetchs = array(
+        /* Возвращающие множество записей */
+        'many' => array(
+            'assoc', 'row', 'col', 'object',
+            'iassoc', 'irow', 'icol', 'iobject',
+            'vars', 'num',
+        ),
+        /* Возвращаюшие одну запись */
+        'one' => array(
+            'rowassoc', 'rowrow', 'rowobject', 'el',
+        ),
+        /* Другие */
+        'other' => array(
+            'no', 'id', 'ar',
+        ),
+    );
+
     /**
      * Декоратор query()
      *
@@ -604,8 +750,7 @@ class goDBExceptionDataNotEnough extends goDBExceptionData {}
 /**
  * Неизвестный плейсхолдер
  */
-class goDBExceptionDataPlaceholder extends goDBExceptionData
-{
+class goDBExceptionDataPlaceholder extends goDBExceptionData {
     public function __construct($placeholder, $code = null) {
         $message = 'Unknown placeholder "'.$placeholder.'"';
         parent::__construct($message, $code);
@@ -620,10 +765,24 @@ class goDBExceptionDataMixed extends goDBExceptionData {}
 /**
  * Неверный fetch
  */
-class goDBExceptionFetch extends goDBLogicException
-{
+abstract class goDBExceptionFetch extends goDBLogicException {}
+
+/**
+ * Неверный fetch - неизвестный
+ */
+class goDBExceptionFetchUnknown extends goDBExceptionFetch {
     public function __construct($fetch, $code = null) {
         $message = 'Unknown fetch "'.$fetch.'"';
+        parent::__construct($message, $code);
+    }
+}
+
+/**
+ * Неверный fetch - неожиданный (assoc после INSERT, например)
+ */
+class goDBExceptionFetchUnexpected extends goDBExceptionFetch {
+    public function __construct($fetch, $code = null) {
+        $message = 'Unexpected fetch "'.$fetch.'" for this query';
         parent::__construct($message, $code);
     }
 }
