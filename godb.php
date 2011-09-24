@@ -3,7 +3,7 @@
  * Библиотека для работы с базой данных MySQL
  * 
  * @package   goDB
- * @version   1.1.3 (1 июля 2010)
+ * @version   1.2.0 (14 сентября 2010)
  * @author    Григорьев Олег aka vasa_c
  * @copyright &copy; PyhaTeam, 2007-2010
  * @license   http://www.gnu.org/copyleft/lesser.html LGPL
@@ -27,21 +27,21 @@ class goDB extends mysqli
      * @param int    $port      [optional]
      * @param string $socket    [optional]
      */
-    public function __construct($host = null, $username = null, $passwd = null, $dbname = null, $port = null, $socket = null)
-    {       
+    public function __construct($host = null, $username = null, $passwd = null, $dbname = null, $port = null, $socket = null) {       
     	if (is_array($host)) {
-    		$username = isSet($host['username']) ? $host['username'] : null;
-    		$passwd   = isSet($host['passwd']) ? $host['passwd'] : null;
-    		$dbname   = isSet($host['dbname']) ? $host['dbname'] : null;
-    		$port     = isSet($host['port']) ? $host['port'] : null;
-    		$socket   = isSet($host['socket']) ? $host['socket'] : null;
+    		$username = isset($host['username']) ? $host['username'] : null;
+    		$passwd   = isset($host['passwd'])   ? $host['passwd']   : null;
+    		$dbname   = isset($host['dbname'])   ? $host['dbname']   : null;
+    		$port     = isset($host['port'])     ? $host['port']     : null;
+    		$socket   = isset($host['socket'])   ? $host['socket']   : null;
+            $charset  = isset($host['charset'])  ? $host['charset']  : null;
     		if (isSet($host['prefix'])) {
     			$this->setPrefix($host['prefix']);
     		}
     		if (isSet($host['debug'])) {
     			$this->setDebug($host['debug']);
     		}
-    		$host = isSet($host['host']) ? $host['host'] : null;    		
+    		$host = isSet($host['host']) ? $host['host'] : null;
     	}
     	if (!$port) {
         	$host = explode(':', $host, 2);
@@ -51,6 +51,9 @@ class goDB extends mysqli
         @parent::__construct($host, $username, $passwd, $dbname, $port, $socket);
         if (mysqli_connect_errno()) {
             throw new goDBExceptionConnect(mysqli_connect_error(), mysqli_connect_errno());
+        }
+        if (!empty($charset)) {
+            $this->set_charset($charset);
         }
     }  
     
@@ -65,19 +68,14 @@ class goDB extends mysqli
      * @param  string $prefix  [optional] префикс имен таблиц
      * @return mixed  результат запроса в заданном формате     
      */
-    public function query($pattern, $data = null, $fetch = null, $prefix = null)
-    {        
+    public function query($pattern, $data = null, $fetch = null, $prefix = null) {        
 		self::$qQuery++;
     	$query = self::makeQuery($pattern, $data, $prefix);
         if ($this->queryWrapper) {
-        	if (!is_array($this->queryWrapper)) {
-        		$nf = $this->queryWrapper;
-        		if (!$nf($query, $fetch)) {
-    	    		return false;
-	        	}        		
-        	} elseif (!call_user_func_array($this->queryWrapper, Array($query, $fetch))) {
-        		return false;
-        	}
+            $query = call_user_func_array($this->queryWrapper, array($query));
+            if (!$query) {
+                return false;
+            }
         }
         if ($this->queryDebug) {
         	if ($this->queryDebug === true) {
@@ -104,20 +102,21 @@ class goDB extends mysqli
      * @param array  $data    массив входных данных
      * @param string $prefix  [optional] префикс таблиц
      */
-    public function makeQuery($pattern, $data, $prefix = '')
-    {	
+    public function makeQuery($pattern, $data, $prefix = null) {
         $prefix = ($prefix === null) ? $this->tablePrefix : $prefix;    
-		$q = preg_replace('~{(.*?)}~', '`'.preg_quote($prefix).'\1`', $pattern);
+		$query  = preg_replace('~{(.*?)}~', '`'.preg_quote($prefix).'\1`', $pattern);
 		if (!$data) {
-			return $q;
+			return $query;
 		}
-        $this->_mqPH = $data;
-        $this->_mqPrefix = $prefix;
-        $q = @preg_replace_callback('/\?([int?casveq]?[ina]?);?/', Array($this, '_makeQuery'), $q);
-        if (sizeOf($this->_mqPH) > 0) {
-            throw new goDBExceptionDataMuch();
+        $this->_prefix  = $prefix;
+        $this->_data    = $data;
+        $this->_dataCnt = 0;
+        $this->_phType  = null;
+        $query = preg_replace_callback('~\?([a-z\?-]+)?(:([a-z0-9_-]*))?;?~i', Array($this, '_makeQuery'), $query);
+        if (($this->_phType == 'r') && ($this->_dataCnt < count($data))) {
+            throw new goDBExceptionDataMuch('It is too much data');
         }
-        return $q;
+        return $query;
     }    
     
     /**
@@ -127,8 +126,7 @@ class goDB extends mysqli
      * @param  string        $fetch  формат
      * @return mixed
      */
-    public function fetch($result, $fetch)
-    {
+    public function fetch($result, $fetch) {
         $fetch = strToLower($fetch);
         if ((!$fetch) || ($fetch == 'no')) {
             return $result;
@@ -193,6 +191,9 @@ class goDB extends mysqli
             return new goDBResultObject($result);
         }        
         if ($numRows == 0) {
+            if (!in_array($fetch, array('rowrow', 'rowassoc', 'rowobject', 'el'))) {
+                throw new goDBExceptionFetch($fetch);
+            }
             return false;
         }
         if ($fetch == 'rowrow') {
@@ -208,7 +209,7 @@ class goDB extends mysqli
             $r = $result->fetch_row();
             return $r[0];
         }
-        return true;
+        throw new goDBExceptionFetch($fetch);
     }
 
     /**
@@ -216,8 +217,7 @@ class goDB extends mysqli
      *
      * @param string $prefix
      */
-    public function setPrefix($prefix)
-    {
+    public function setPrefix($prefix) {
         $this->tablePrefix = $prefix;
         return true;
     }
@@ -227,8 +227,7 @@ class goDB extends mysqli
      *
      * @param bool $debug
      */
-    public function setDebug($debug = true)
-    {
+    public function setDebug($debug = true) {
         $this->queryDebug = $debug;
         return true;
     }
@@ -238,8 +237,7 @@ class goDB extends mysqli
      *
      * @param callback $wrapper функция-декоратор
      */
-    public function queryDecorated($wrapper)
-    {
+    public function queryDecorated($wrapper) {
     	$this->queryWrapper = $wrapper;
     	return true;
     }    
@@ -256,8 +254,7 @@ class goDB extends mysqli
      * @return int
      *         количество записей удовлетворяющих условию
      */
-    public function countRows($table, $where = null, $data = null)
-    {
+    public function countRows($table, $where = null, $data = null) {
     	$where   = $where ? ('WHERE '.$where) : '';
     	$pattern = 'SELECT COUNT(*) FROM {'.$table.'} '.$where;
     	return $this->query($pattern, $data, 'el');
@@ -280,11 +277,14 @@ class goDB extends mysqli
      * @param  bool   $post     [optional] отложенное подключение
      * @return mixed
      */
-    public static function makeDB($host, $username = null, $passwd = null, $dbname = null, $name = null, $post = false)
-    {
+    public static function makeDB($host, $username = null, $passwd = null, $dbname = null, $name = null, $post = false) {
     	if (is_array($host)) {
-    		$name = isSet($host['name']) ? $host['name'] : self::baseName;
-    		$post = isSet($host['postmake']) ? $host['postmake'] : false;
+    		$name = isset($host['name']) ? $host['name'] : self::baseName;
+            if (isset($host['link'])) {
+                self::assocDB($name, $host['link']);
+                return true;
+            }
+    		$post = isset($host['postmake']) ? $host['postmake'] : false;
     	} elseif (!$name) {
             $name = self::baseName;
         }
@@ -307,8 +307,7 @@ class goDB extends mysqli
      * @param goDB   $db
      * @param string $name [optional]
      */
-    public static function setDB(goDB $db, $name = self::baseName)
-    {
+    public static function setDB(goDB $db, $name = self::baseName) {
         if (isSet(self::$dbList[$name])) {
             throw new goDBExceptionDBAlready($name);
         }
@@ -325,12 +324,11 @@ class goDB extends mysqli
      * @param string $one новая база
      * @param string $two та, с которой ассоциируется
      */
-    public static function assocDB($one, $two)
-    {
-    	if (isSet(self::$dbList[$one])) {
+    public static function assocDB($one, $two) {
+    	if (isset(self::$dbList[$one])) {
     		throw new goDBExceptionDBAlready($one);
     	}
-    	if (!isSet(self::$dbList[$two])) {
+    	if (!isset(self::$dbList[$two])) {
     		throw new goDBExceptionDBNotFound($two);
     	}
     	self::$dbList[$one] = $two;
@@ -346,9 +344,8 @@ class goDB extends mysqli
      * @param  string $name
      * @return goDB
      */
-    public static function getDB($name = self::baseName)
-    {
-        if (!isSet(self::$dbList[$name])) {
+    public static function getDB($name = self::baseName) {
+        if (!isset(self::$dbList[$name])) {
             throw new goDBExceptionDBNotFound($name);
         }
         if (is_array(self::$dbList[$name])) {
@@ -370,8 +367,7 @@ class goDB extends mysqli
      * @param  string $name
      * @return mixed
      */
-    public static function queryDB($pattern, $data = null, $fetch = null, $prefix = null, $name = self::baseName)
-    {
+    public static function queryDB($pattern, $data = null, $fetch = null, $prefix = null, $name = self::baseName) {
         return self::getDB($name)->query($pattern, $data, $fetch, $prefix);
     }      
     
@@ -380,8 +376,7 @@ class goDB extends mysqli
 	 *
 	 * @return int
 	 */
-    public static function getQQuery()
-    {
+    public static function getQQuery() {
     	return self::$qQuery;
     }
     
@@ -390,70 +385,118 @@ class goDB extends mysqli
     /**
      * Вспомагательная функция для формирования запроса
      *
-     * @param  array  $ph
+     * @param  array  $matches
      * @return string
      */
-    private function _makeQuery($ph)
-    {
-        if ($ph[1] == '?') {
-            return '?';
-        }
-        if (sizeOf($this->_mqPH) == 0) {
-            throw new goDBExceptionDataNotEnough();
-        }
-        $el = array_shift($this->_mqPH);
-        switch ($ph[1]) {
-            case ('i'): return (0 + $el);
-            case ('t'): return '`'.$this->_mqPrefix.$el.'`';
-            case ('c'):
-                if (is_array($el)) {
-                    return '`'.$this->_mqPrefix.$el[0].'`.`'.$el[1].'`';
+    private function _makeQuery($matches) {
+        if (!isset($matches[1])) {
+            /* Простой регулярный (не именованный) плейсхолдер "?" */
+            $placeholder = '';
+            $type        = 'r';
+        } else {
+            /* Плейсхолдер с указанием типа и (или) именованный */
+            $placeholder = strtolower($matches[1]);
+            if ($placeholder == '?') {
+                return '?';
+            }
+            if (isset($matches[2])) {
+                /* Именованный плейсхолдер */
+                if (isset($matches[3])) {
+                    $type = 'n';
+                    $name = $matches[3];
+                } else {
+                    /* ":" поставлена, а имя не указано */
+                    throw new goDBExceptionDataPlaceholder($matches[0]);
                 }
-                return '`'.$el.'`';
-            case ('n'): return is_null($el) ? 'NULL' : ('"'.$this->real_escape_string($el).'"');
-            case ('ni'):
-            case ('in'): return is_null($el) ? 'NULL' : (0 + $el);
-            case ('a'):
-                foreach ($el as &$e) {
-                    $e = '"'.$this->real_escape_string($e).'"';
-                }
-                return implode(',', $el);
-            case ('ai'):
-            case ('ia'):
-                foreach ($el as &$e) {
-                    $e = (0 + $e);
-                }
-                return implode(',', $el);
-            case ('s'):
-            	$set = Array();
-            	foreach ($el as $k => $v) {
-            		if ($v !== null) {
-            			$set[] = '`'.$k.'`="'.$this->real_escape_string($v).'"';
-            		} else {
-            			$set[] = '`'.$k.'`=NULL';
-            		}
-            	}
-            	return implode(',', $set);
-            case ('v'):
-            	$valueses = Array();
-            	foreach ($el as $v) {
-            		$values = Array();
-            		foreach ($v as $d) {
-            			if ($d !== null) {
-            				$values[] = '"'.$this->real_escape_string($d).'"';
-            			} else {
-            				$values[] = 'NULL';
-            			}
-            		}
-            		$valueses[] = '('.implode(',', $values).')';
-            	}
-            	return implode(',', $valueses);
-            case ('e'):
-            	return $this->real_escape_string($el);
-            case ('q'):
-            	return $el;
+            } else {
+                /* Регулярный плейсхолдер */
+                $type = 'r';
+            }
         }
-        return '"'.$this->real_escape_string($el).'"';
+        if ($type == 'r') {
+            /* Для регулярного плейсхолдера индекс - очередной номер */
+            $name = $this->_dataCnt;
+            $this->_dataCnt++;
+        }
+        if (!$this->_phType) {
+            /* Тип плейсхолдеров ещё не определён */
+            $this->_phType = $type;
+        } elseif ($this->_phType != $type) {
+            /* Неоднородные плейсхолдеры в одном запроса */
+            throw new goDBExceptionDataMixed('regularly and named placeholder in a query');
+        }
+        if (!array_key_exists($name, $this->_data)) {
+            /* Нет такого индекса */
+            throw new goDBExceptionDataNotEnough('It is not enough data');
+        }
+        $value = $this->_data[$name];
+
+        switch ($placeholder) {
+            case '':
+            case 'string':
+                return '"'.$this->real_escape_string($value).'"';
+            case 'n':
+            case 'null':
+                return is_null($value) ? 'NULL' : '"'.$this->real_escape_string($value).'"';
+            case 'i':
+            case 'int':
+                return (0 + $value);
+            case 'in':
+            case 'ni':
+            case 'int-null':
+                return is_null($value) ? 'NULL' : (0 + $value);
+            case 'l':
+            case 'list':
+            case 'a':
+                foreach ($value as &$e) {
+                    $e = is_null($e) ? 'NULL' : '"'.$this->real_escape_string($e).'"';
+                }
+                return implode(',', $value);
+            case 'li':
+            case 'list-int':
+            case 'ai':
+            case 'ia':
+                foreach ($value as &$e) {
+                    $e = is_null($e) ? 'NULL' : (0 + $e);
+                }
+                return implode(',', $value);
+            case 's':
+            case 'set':
+                $set = array();
+                foreach ($value as $col => $val) {
+                    $val   = is_null($val) ? 'NULL' : '"'.$this->real_escape_string($val).'"';
+                    $set[] = '`'.$col.'`='.$val;
+                }
+                return implode(',', $set);
+            case 'v':
+            case 'values':
+                $valueses = array();
+                foreach ($value as $vs) {
+                    $values = array();
+                    foreach ($vs as $v) {
+                        $values[] = is_null($v) ? 'NULL' : '"'.$this->real_escape_string($v).'"';
+                    }
+                    $valueses[] = '('.implode(',', $values).')';
+                }
+                return implode(',', $valueses);
+            case 'e':
+            case 'escape':
+                return $this->real_escape_string($value);
+            case 'q':
+            case 'query':
+                return $value;
+            case 't':
+            case 'table':
+                return '`'.$this->_prefix.$value.'`';
+            case 'c':
+            case 'col':
+                if (is_array($value)) {
+                    return '`'.$this->_prefix.$value[0].'`.`'.$value[1].'`';
+                }
+                return '`'.$value.'`';
+            default:
+                throw new goDBExceptionDataPlaceholder($matches[0]);
+        }
     }
   
   
@@ -495,34 +538,36 @@ class goDB extends mysqli
     protected $queryWrapper;
 
     /* Вспомагательная фигня */
-    private $_mqPH;
-    private $_mqPrefix;      
+    private $_data;
+    private $_dataCnt;
+    private $_phType;
+    private $_prefix;
 }
 
 
 /****************************************
  * 
- * Классы исключений при работе с базой  
+ * Иерархия исключений при работе с библиотекой
  *
  ****************************************/
 
-/**
- *  Базовый
- */
-class goDBException extends RuntimeException {}
+interface goDBException {}
+
+abstract class goDBRuntimeException extends RuntimeException implements goDBException {}
+abstract class goDBLogicException extends LogicException implements goDBException {}
+
 
 /**
  * Ошибка подключения
  */
-class goDBExceptionConnect extends goDBException {}
+class goDBExceptionConnect extends goDBRuntimeException {}
 
 /**
  * Ошибка в запросе
  */
-class goDBExceptionQuery extends goDBException
+class goDBExceptionQuery extends goDBLogicException
 {
-    public function __construct($query, $errno, $error)
-    {
+    public function __construct($query, $errno, $error) {
 		$msg = 'DB Error. Query="'.$query.'" error = '.$errno.' "'.$error.'"';
 		parent::__construct($msg, $errno);
         $this->query = $query;
@@ -534,8 +579,7 @@ class goDBExceptionQuery extends goDBException
     public function errno() {return $this->errno;}
     public function error() {return $this->error;}
 
-    public function __toString()
-    {
+    public function __toString() {
         return htmlspecialchars($this->getMessage());
     }
 
@@ -545,31 +589,49 @@ class goDBExceptionQuery extends goDBException
 /**
  * Несоответствие количество плейсхолдеров и входных данных
  */
-class goDBExceptionData extends goDBException
-{
-    protected $message = 'DB Data Exception';
-}
+abstract class goDBExceptionData extends goDBLogicException {}
 
 /**
  * Данных больше плейсхолдеров
  */
-class goDBExceptionDataMuch extends goDBExceptionData
-{
-    protected $message = 'It is too much data';
-}
+class goDBExceptionDataMuch extends goDBExceptionData {}
 
 /**
  * Данных меньше плейсхолдеров
  */
-class goDBExceptionDataNotEnough extends goDBExceptionData
+class goDBExceptionDataNotEnough extends goDBExceptionData {}
+
+/**
+ * Неизвестный плейсхолдер
+ */
+class goDBExceptionDataPlaceholder extends goDBExceptionData
 {
-    protected $message = 'It is not enough data';
+    public function __construct($placeholder, $code = null) {
+        $message = 'Unknown placeholder "'.$placeholder.'"';
+        parent::__construct($message, $code);
+    }
+}
+
+/**
+ * В запросе используются именованные плейсхолдеры наравне с регулярными
+ */
+class goDBExceptionDataMixed extends goDBExceptionData {}
+
+/**
+ * Неверный fetch
+ */
+class goDBExceptionFetch extends goDBLogicException
+{
+    public function __construct($fetch, $code = null) {
+        $message = 'Unknown fetch "'.$fetch.'"';
+        parent::__construct($message, $code);
+    }
 }
 
 /**
  * Проблемы со списком баз данных в пространстве имен DB
  */
-class goDBExceptionDB extends goDBException {}
+abstract class goDBExceptionDB extends goDBLogicException {}
 class goDBExceptionDBAlready  extends goDBExceptionDB {}
 class goDBExceptionDBNotFound extends goDBExceptionDB {}
 
@@ -577,60 +639,50 @@ class goDBExceptionDBNotFound extends goDBExceptionDB {}
  * Результат выполнения запроса (итератор)
  *
  */
-abstract class goDBResult implements Iterator, ArrayAccess, Countable
-{
+abstract class goDBResult implements Iterator, ArrayAccess, Countable {
 
-    public function __construct($result)
-    {
+    public function __construct($result) {
         $this->result  = $result;
         $this->numRows = $result->num_rows;
     }
 
-    public function __destruct()
-    {
+    public function __destruct() {
         if (is_resource($this->result)) {
             $this->result->free();
         }
     }
 
-    public function rewind()
-    {
+    public function rewind() {
         $this->count = 0;
         return true;
     }
 
-    public function current()
-    {
+    public function current() {
         $this->result->data_seek($this->count);
         return $this->getEl();
     }
 
-    public function key()
-    {
+    public function key() {
         return $this->count;
     }
 
-    public function next()
-    {
+    public function next() {
         $this->count++;
         return $this->current();
     }
 
-    public function valid()
-    {
+    public function valid() {
         if ($this->count >= $this->numRows) {
             return false;
         }
         return true;
     }
 
-    public function count()
-    {
+    public function count() {
         return $this->numRows;
     }
 
-    public function get($num, $index = false)
-    {
+    public function get($num, $index = false)  {
         if ($num >= $this->numRows) {
             return false;
         }
@@ -648,20 +700,16 @@ abstract class goDBResult implements Iterator, ArrayAccess, Countable
         return $r[$index];
     }
 
-    public function offsetGet($offset)
-    {
+    public function offsetGet($offset) {
         return $this->get($offset);
     }
-    public function offsetSet($offset, $value)
-    {
+    public function offsetSet($offset, $value) {
         return false;
     }
-    public function offsetExists($offset)
-    {
+    public function offsetExists($offset) {
         return (($offset >= 0) && ($offset < $numRows));
     }
-    public function offsetUnset($offset)
-    {
+    public function offsetUnset($offset) {
         return false;
     }
 
@@ -673,24 +721,21 @@ abstract class goDBResult implements Iterator, ArrayAccess, Countable
 
 class goDBResultRow extends goDBResult
 {
-    protected function getEl()
-    {
+    protected function getEl() {
         return $this->result->fetch_row();
     }
 }
 
 class goDBResultAssoc extends goDBResult
 {
-    protected function getEl()
-    {
+    protected function getEl()  {
         return $this->result->fetch_assoc();
     }
 }
 
 class goDBResultCol extends goDBResult
 {
-    protected function getEl()
-    {
+    protected function getEl() {
         $r = $this->result->fetch_row();
         return $r[0];
     }
@@ -698,10 +743,7 @@ class goDBResultCol extends goDBResult
 
 class goDBResultObject extends goDBResult
 {
-    protected function getEl()
-    {
+    protected function getEl() {
         return $this->result->fetch_object();        
     }
 }
-
-?>
