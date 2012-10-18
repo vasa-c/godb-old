@@ -36,7 +36,7 @@ class goDBFetchTest extends goDBTestBase {
         $db = $this->db(true);
         $pattern = 'SELECT * FROM `godb` ORDER BY `id` ASC LIMIT 3';
         $result  = $this->db()->query($pattern, null, 'assoc');
-        $this->assertType('array', $result);
+        $this->assertInternalType('array', $result);
         $this->assertEquals(3, count($result));
         $this->assertArrayHasKey(1, $result);
         $row = $result[1];
@@ -53,7 +53,7 @@ class goDBFetchTest extends goDBTestBase {
         $db = $this->db(true);
         $pattern = 'SELECT `number`,`caption`,`id` FROM `godb` ORDER BY `id` ASC LIMIT 2';
         $result  = $this->db()->query($pattern, null, 'row');
-        $this->assertType('array', $result);
+        $this->assertInternalType('array', $result);
         $this->assertEquals(2, count($result));
         $this->assertArrayHasKey(1, $result);
         $row = $result[1];
@@ -70,11 +70,11 @@ class goDBFetchTest extends goDBTestBase {
         $db = $this->db(true);
         $pattern = 'SELECT `number`,`caption`,`id` FROM `godb` ORDER BY `id` ASC LIMIT 4';
         $result  = $db->query($pattern, null, 'object');
-        $this->assertType('array', $result);
+        $this->assertInternalType('array', $result);
         $this->assertEquals(4, count($result));
         $this->assertArrayHasKey(2, $result);
         $row = $result[2];
-        $this->assertType('object', $row);
+        $this->assertInternalType('object', $row);
         $this->assertAttributeEquals('five', 'caption', $row);
     }
 
@@ -133,7 +133,7 @@ class goDBFetchTest extends goDBTestBase {
         $ficol    = $db->fetch($result, 'icol');
         $fiobject = $db->fetch($result, 'iobject');
 
-        $this->assertType('array', $fassoc);
+        $this->assertInternalType('array', $fassoc);
         $this->assertInstanceOf('goDBResultAssoc', $fiassoc);
         $this->assertInstanceOf('goDBResultRow', $firow);
         $this->assertInstanceOf('goDBResultCol', $ficol);
@@ -163,7 +163,7 @@ class goDBFetchTest extends goDBTestBase {
         $this->assertTrue(isset($fiassoc[2]));
         $this->assertFalse(isset($fiassoc[20]));
     }
-    
+
     /**
      * Очищать результат, используемый в итераторе нельзя
      *
@@ -172,7 +172,7 @@ class goDBFetchTest extends goDBTestBase {
     public function testIteratorFree() {
         $db     = $this->db(true);
         $summ   = 0;
-        $result = $db->query('SELECT `number` FROM `godb` LIMIT 5', null, 'icol');        
+        $result = $db->query('SELECT `number` FROM `godb` LIMIT 5', null, 'icol');
         foreach ($result as $number) {
             $summ += $number;
         }
@@ -189,7 +189,7 @@ class goDBFetchTest extends goDBTestBase {
 
         $pattern = 'SELECT `caption`,`number` FROM `godb` WHERE `caption` IS NOT NULL';
         $result  = $db->query($pattern, null, 'vars');
-        $this->assertType('array', $result);
+        $this->assertInternalType('array', $result);
         $this->assertArrayHasKey('one', $result);
         $this->assertArrayHasKey('three', $result);
         $this->assertArrayHasKey('double', $result);
@@ -199,7 +199,7 @@ class goDBFetchTest extends goDBTestBase {
 
         $pattern = 'SELECT `caption` FROM `godb` WHERE `caption` IS NOT NULL';
         $result  = $db->query($pattern, null, 'vars');
-        $this->assertType('array', $result);
+        $this->assertInternalType('array', $result);
         $this->assertArrayHasKey('one', $result);
         $this->assertArrayHasKey('three', $result);
         $this->assertArrayHasKey('double', $result);
@@ -226,7 +226,7 @@ class goDBFetchTest extends goDBTestBase {
 
     /**
      * rowrow: одна запись в виде порядкового массива
-     * 
+     *
      * @covers goDB::fetch
      */
     public function testRowRow() {
