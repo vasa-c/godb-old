@@ -1,7 +1,7 @@
 <?php
 /**
  * Библиотека для работы с базой данных MySQL
- * 
+ *
  * @package   goDB
  * @version   1.3.2 (31 января 2011)
  * @link      http://pyha.ru/go/godb/
@@ -15,7 +15,7 @@ class goDB extends mysqli implements goDBI
 {
 
   /*** PUBLIC: ***/
-    
+
     /**
      * Конструктор.
      *
@@ -44,11 +44,11 @@ class goDB extends mysqli implements goDBI
      * @param string $socket [optional]
      *        mysql-сокет для подключения
      */
-    public function __construct($host = null, $username = null, $passwd = null, $dbname = null, $port = null, $socket = null) {       
+    public function __construct($host = null, $username = null, $passwd = null, $dbname = null, $port = null, $socket = null) {
     	if (is_array($host)) {
             $config = $host;
             $fields = array(
-                'host', 'username', 'passwd', 'dbname', 'port', 
+                'host', 'username', 'passwd', 'dbname', 'port',
                 'socket', 'charset', 'debug', 'prefix',
             );
             foreach ($fields as $field) {
@@ -59,8 +59,8 @@ class goDB extends mysqli implements goDBI
     	}
     	if (!$port) {
         	$host = explode(':', $host, 2);
-        	$port = empty($host[1]) ? null : $host[1];        
-        	$host = $host[0];    	
+        	$port = empty($host[1]) ? null : $host[1];
+        	$host = $host[0];
     	}
         @parent::__construct($host, $username, $passwd, $dbname, $port, $socket);
         if (mysqli_connect_errno()) {
@@ -82,7 +82,7 @@ class goDB extends mysqli implements goDBI
      *         ошибочный шаблон или входные данные
      * @throws goDBExceptionFetch
      *         неизвестный или неожиданный формат представления
-     * 
+     *
      * @param string $pattern
      *        sql-запрос или строка-шаблон с плейсхолдерами
      * @param array $data [optional]
@@ -94,7 +94,7 @@ class goDB extends mysqli implements goDBI
      * @return mixed
      *         результат запроса в заданном формате
      */
-    public function query($pattern, $data = null, $fetch = null, $prefix = null) {        
+    public function query($pattern, $data = null, $fetch = null, $prefix = null) {
 		self::$qQuery++;
     	$query = $this->makeQuery($pattern, $data, $prefix);
         if ($this->queryWrapper) {
@@ -103,11 +103,13 @@ class goDB extends mysqli implements goDBI
                 return false;
             }
         }
-        $this->toDebug($query);
         if ($this->transactionFailed) {
             return false;
         }
+        $duration = microtime(true);
         $result = parent::query($query, MYSQLI_STORE_RESULT);
+        $duration = microtime(true) - $duration;
+        $this->toDebug($query, $duration);
         if ($this->errno) {
             if (is_object($result)) {
                 $result->free();
@@ -554,7 +556,7 @@ class goDB extends mysqli implements goDBI
      *        префикс таблиц
      */
     public function makeQuery($pattern, $data, $prefix = null) {
-        $prefix = ($prefix === null) ? $this->tablePrefix : $prefix;    
+        $prefix = ($prefix === null) ? $this->tablePrefix : $prefix;
 		$query  = preg_replace('~{(.*?)}~', '`'.preg_quote($prefix).'\1`', $pattern);
 		if (!$data) {
 			return $query;
@@ -569,7 +571,7 @@ class goDB extends mysqli implements goDBI
         }
         return $query;
     }
-    
+
     /**
      * Разбор результата в нужном формате
      *
@@ -651,13 +653,13 @@ class goDB extends mysqli implements goDBI
                 $this->isiterator = true;
                 return new goDBResultAssoc($result);
             case 'irow':
-                $this->isiterator = true;            
+                $this->isiterator = true;
                 return new goDBResultRow($result);
             case 'icol':
-                $this->isiterator = true;            
+                $this->isiterator = true;
                 return new goDBResultCol($result);
             case 'iobject':
-                $this->isiterator = true;            
+                $this->isiterator = true;
                 return new goDBResultObject($result);
         }
 
@@ -702,7 +704,7 @@ class goDB extends mysqli implements goDBI
 
     /**
      * Получить текущий префикс
-     * 
+     *
      * @return string
      */
     public function getPrefix() {
@@ -754,10 +756,10 @@ class goDB extends mysqli implements goDBI
     public function getQueryDecorator() {
         return $this->queryWrapper;
     }
-    
+
     /**
      * Количество записей в таблице, удволетворяющих условию
-     * 
+     *
      * @param string $table
      *        имя таблицы (используется префикс)
      * @param string $where [optional]
@@ -771,8 +773,8 @@ class goDB extends mysqli implements goDBI
     	$where   = $where ? ('WHERE '.$where) : '';
     	$pattern = 'SELECT COUNT(*) FROM {'.$table.'} '.$where;
     	return $this->query($pattern, $data, 'el');
-    }    
- 
+    }
+
   /*** STATIC: ***/
 
     /**
@@ -780,7 +782,7 @@ class goDB extends mysqli implements goDBI
      * @const string
      */
     const baseName = 'base';
-      
+
     /**
      * Создание базы и сохранение в пространстве имен
      *
@@ -793,7 +795,7 @@ class goDB extends mysqli implements goDBI
      *         заданное имя уже существует
      * @throws goDBExceptionConnect
      *         ошибка подключения, если не используется отложенное подключение
-     * 
+     *
      * @param mixed $host
      *        хост - возможно указание порта через ":"
      *        либо конфигурационный массив
@@ -825,7 +827,7 @@ class goDB extends mysqli implements goDBI
             throw new goDBExceptionDBAlready($name);
         }
         if (!$post) {
-            self::$dbList[$name] = new self($host, $username, $passwd, $dbname);        
+            self::$dbList[$name] = new self($host, $username, $passwd, $dbname);
         } else {
             self::$dbList[$name] = Array($host, $username, $passwd, $dbname);
         }
@@ -837,7 +839,7 @@ class goDB extends mysqli implements goDBI
      *
      * @throws goDBExceptionAlready
      *         имя занято
-     * 
+     *
      * @param goDB $db
      * @param string $name [optional]
      */
@@ -848,7 +850,7 @@ class goDB extends mysqli implements goDBI
         self::$dbList[$name] = $db;
         return true;
     }
-    
+
     /**
      * Ассоциация с базой
      *
@@ -856,7 +858,7 @@ class goDB extends mysqli implements goDBI
      *         имя новой занято
      * @throws goDBExceptionDBNotFound
      *         целевая база отсутствует
-     * 
+     *
      * @param string $one
      *        новая база
      * @param string $two
@@ -880,7 +882,7 @@ class goDB extends mysqli implements goDBI
      *         нет базы с таким именем
      * @throws goDBExceptionConnect
      *         может произойти ошибка при отложенном подключении
-     * 
+     *
      * @param string $name
      * @return goDB
      */
@@ -889,7 +891,7 @@ class goDB extends mysqli implements goDBI
             throw new goDBExceptionDBNotFound($name);
         }
         if (is_array(self::$dbList[$name])) {
-            $prm = self::$dbList[$name];        
+            $prm = self::$dbList[$name];
             self::$dbList[$name] = new self($prm[0], $prm[1], $prm[2], $prm[3]);
         } elseif (!is_object(self::$dbList[$name])) {
         	self::$dbList[$name] = self::getDB(self::$dbList[$name]);
@@ -916,8 +918,8 @@ class goDB extends mysqli implements goDBI
      */
     public static function queryDB($pattern, $data = null, $fetch = null, $prefix = null, $name = self::baseName) {
         return self::getDB($name)->query($pattern, $data, $fetch, $prefix);
-    }      
-    
+    }
+
 	/**
 	 * Получить количество запросов через данный класс
 	 *
@@ -926,7 +928,7 @@ class goDB extends mysqli implements goDBI
     public static function getQQuery() {
     	return self::$qQuery;
     }
-    
+
   /*** PRIVATE: ***/
 
     /**
@@ -1132,7 +1134,7 @@ class goDB extends mysqli implements goDBI
                     }
                 }
             }
-        } else {            
+        } else {
             foreach ($queries as &$q) {
                 $q[2] = isset($q[2]) ? $q[2] : 'true';
             }
@@ -1204,17 +1206,19 @@ class goDB extends mysqli implements goDBI
 
     /**
      * Вывод отладочной информации
-     * 
+     *
      * @param string $message
+     * @param floar $duration [optional]
      */
-    private function toDebug($message) {
+    private function toDebug($message, $duration = null) {
         if (!$this->queryDebug) {
             return false;
         }
        	if ($this->queryDebug === true) {
            	echo '<pre>'.htmlspecialchars($message).'</pre>';
        	} else {
-       		call_user_func($this->queryDebug, $message);
+            $args = func_get_args();
+       		call_user_func_array($this->queryDebug, $args);
        	}
         return true;
     }
@@ -1229,9 +1233,9 @@ class goDB extends mysqli implements goDBI
         }
         $this->cachePrepare = null;
     }
-  
+
   /*** VARS: ***/
-    
+
    /**
      * Префикс таблиц по умолчанию
      *
@@ -1252,7 +1256,7 @@ class goDB extends mysqli implements goDBI
      * @var array
      */
     protected static $dbList = Array();
-    
+
     /**
      * Количество запросов через класс
      *
@@ -1324,13 +1328,13 @@ class goDB extends mysqli implements goDBI
     private $_dataCnt;
     private $_phType;
     private $_prefix;
-    
+
     private $isiterator;
 }
 
 
 /****************************************
- * 
+ *
  * Иерархия исключений при работе с библиотекой
  *
  ****************************************/
@@ -1554,7 +1558,7 @@ class goDBResultCol extends goDBResult
 class goDBResultObject extends goDBResult
 {
     protected function getEl() {
-        return $this->result->fetch_object();        
+        return $this->result->fetch_object();
     }
 }
 
@@ -1735,7 +1739,7 @@ class goDBPrepare
     private function makeSTMT() {
         $this->stmt = $this->db->prepare($this->query);
         if (!$this->stmt) {
-            $message = 
+            $message =
                 'Error prepare "'.$this->query.'"; '.
                     '#'.$this->db->errno.
                     ': "'.$this->db->error.'"';
@@ -1860,7 +1864,7 @@ class goDBPrepare
                 }
                 return $result;
         }
-        
+
         if ($fetch == 'num') {
             $num = 0;
             while ($stmt->fetch()) {
@@ -1880,9 +1884,9 @@ class goDBPrepare
                 return $this->aCopy($row);
             case 'rowobject':
                 return (object)$this->aCopy($assoc);
-            case 'el':                
+            case 'el':
                 return $row[0];
-            case 'bool':                
+            case 'bool':
                 return (bool)$row[0];
         }
 
@@ -1950,7 +1954,7 @@ class goDBLink implements goDBI {
 
     /**
      * Конструктор
-     * 
+     *
      * @param goDBI $db
      *        объект, на который нужно сделать ссылку
      */
@@ -2003,10 +2007,10 @@ class goDBLink implements goDBI {
         $this->db->queryDecorated($wrapper);
         return $result;
     }
-    
+
     public function __invoke($pattern, $data = null, $fetch = null, $prefix = null) {
         return $this->query($pattern, $data, $fetch, $prefix);
-    }    
+    }
 
     /**
      * @override
