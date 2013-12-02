@@ -1341,9 +1341,50 @@ class goDB extends mysqli implements goDBI
 
 interface goDBException {}
 
-abstract class goDBRuntimeException extends RuntimeException implements goDBException {}
-abstract class goDBLogicException extends LogicException implements goDBException {}
+abstract class goDBRuntimeException extends RuntimeException implements goDBException {
 
+    final public static function truncateTrace($trace, $file) {   
+        $litem = null;               
+        foreach (\array_reverse($trace) as $item) {
+            if (isset($item['file']) && ($item['file'] === __FILE__)) {
+                if (!$litem) {
+                    return null;
+                }
+                return array(
+                    'file' => isset($item['file']) ? $litem['file'] : null,
+                    'line' => isset($item['line']) ? $litem['line'] : null,
+                );
+            }            
+            $litem = $item;            
+        }
+        if ($file === __FILE__) {
+            return array(
+                'file' => isset($item['file']) ? $litem['file'] : null,
+                'line' => isset($item['line']) ? $litem['line'] : null,
+            );        
+        }
+        return null;
+    }
+
+    public function __construct($message = '', $code = 0, $previous = null) {
+        parent::__construct($message, $code, $previous);           
+        $file = self::truncateTrace($this->getTrace(), $this->file);                      
+        if ($file) {
+            $this->file = $file['file'];
+            $this->line = $file['line'];        
+        }
+    }
+}
+abstract class goDBLogicException extends LogicException implements goDBException {
+    public function __construct($message = '', $code = 0, $previous = null) {
+        parent::__construct($message, $code, $previous);        
+        $file = goDBRuntimeException::truncateTrace($this->getTrace(), $this->file);       
+        if ($file) {
+            $this->file = $file['file'];
+            $this->line = $file['line'];        
+        }
+    }
+}
 
 /**
  * Ошибка подключения

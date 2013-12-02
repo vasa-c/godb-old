@@ -173,5 +173,26 @@ class goDBExceptionTest extends goDBTestBase {
     public function testExceptionDBNotFound() {
         goDB::getDB('wtf');
     }
-
+    
+    /**
+     * Exception указывает на строку из которой вызвана goDB
+     */
+    public function testBacktrace() {
+        $pattern = 'SELECT ?c FROM ?t';
+        $data = array('c');
+        try {
+            $line = __LINE__ + 1;
+            $this->db()->query($pattern, $data);                    
+        } catch (goDBExceptionDataNotEnough $e) {              
+            $this->assertEquals(__FILE__, $e->getFile());
+            $this->assertEquals($line, $e->getLine());
+        }
+        try {
+            $line = __LINE__ + 1;
+            throw new goDBExceptionConnect();
+        } catch (goDBExceptionConnect $e) {              
+            $this->assertEquals(__FILE__, $e->getFile());
+            $this->assertEquals($line, $e->getLine());
+        }                
+    }
 }
