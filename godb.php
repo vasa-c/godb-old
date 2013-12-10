@@ -1345,7 +1345,7 @@ abstract class goDBRuntimeException extends RuntimeException implements goDBExce
 
     final public static function truncateTrace($trace, $file) {   
         $litem = null;               
-        foreach (\array_reverse($trace) as $item) {
+        foreach (array_reverse($trace) as $item) {
             if (isset($item['file']) && ($item['file'] === __FILE__)) {
                 if (!$litem) {
                     return null;
