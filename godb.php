@@ -1367,7 +1367,13 @@ abstract class goDBRuntimeException extends RuntimeException implements goDBExce
     }
 
     public function __construct($message = '', $code = 0, $previous = null) {
-        parent::__construct($message, $code);
+	
+	if (version_compare(PHP_VERSION, '5.3.0', '>=')) {
+		parent::__construct($message, $code, $previous);
+	} else {
+		parent::__construct($message, $code);
+	}
+		
         $file = self::truncateTrace($this->getTrace(), $this->file);
         if ($file) {
             $this->file = $file['file'];
@@ -1377,7 +1383,13 @@ abstract class goDBRuntimeException extends RuntimeException implements goDBExce
 }
 abstract class goDBLogicException extends LogicException implements goDBException {
     public function __construct($message = '', $code = 0, $previous = null) {
-        parent::__construct($message, $code);
+
+	if (version_compare(PHP_VERSION, '5.3.0', '>=')) {
+		parent::__construct($message, $code, $previous);
+	} else {
+		parent::__construct($message, $code);
+	}
+
         $file = goDBRuntimeException::truncateTrace($this->getTrace(), $this->file);
         if ($file) {
             $this->file = $file['file'];
