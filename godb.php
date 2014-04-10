@@ -1024,8 +1024,12 @@ class goDB extends mysqli implements goDBI
                 return implode(',', $set);
             case 'v':
             case 'values':
+                if (empty($value) || (!is_array($value) && !is_object($value))) { return '()'; }
+					
                 $valueses = array();
                 foreach ($value as $vs) {
+                    if (empty($vs) || (!is_array($vs) && !is_object($vs))) { continue; }
+                    
                     $values = array();
                     foreach ($vs as $v) {
                         $values[] = is_null($v) ? 'NULL' : '"'.$this->real_escape_string($v).'"';
